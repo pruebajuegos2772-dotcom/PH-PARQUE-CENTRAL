@@ -8,30 +8,86 @@ import {
   residents,
   reports,
 } from "@/db/schema";
+import { hashPassword } from "@/lib/auth";
 
 const asNumber = (value: string | number | null) => Number(value ?? 0);
 
+// Credenciales iniciales de demostración (cámbialas luego desde la base de datos).
+export const DEMO_ADMIN_EMAIL = "andrea.morales@phnexo.pa";
+export const DEMO_ADMIN_PASSWORD = "Admin123*";
+export const DEMO_OWNER_EMAIL = "carlos.mendoza@email.com";
+export const DEMO_OWNER_PASSWORD = "Parque123*";
+
+async function backfillDemoPasswords() {
+  const rows = await db.select().from(residents);
+  for (const row of rows) {
+    if (row.passwordHash) continue;
+    const password =
+      row.role === "administrador" ? DEMO_ADMIN_PASSWORD : DEMO_OWNER_PASSWORD;
+    await db
+      .update(residents)
+      .set({ passwordHash: hashPassword(password) })
+      .where(eq(residents.id, row.id));
+  }
+}
+
+export async function findResidentByEmail(email: string) {
+  const normalized = email.trim().toLowerCase();
+  const rows = await db.select().from(residents).limit(50);
+  return rows.find((row) => row.email.trim().toLowerCase() === normalized) ?? null;
+}
+
+export async function createResidentWithPassword(input: {
+  fullName: string;
+  email: string;
+  unit: string;
+  role?: string;
+  phone?: string;
+  password: string;
+}) {
+  const [row] = await db
+    .insert(residents)
+    .values({
+      fullName: input.fullName,
+      email: input.email.trim().toLowerCase(),
+      unit: input.unit,
+      role: input.role === "administrador" ? "administrador" : "propietario",
+      phone: input.phone || null,
+      accountStatus: "al_dia",
+      outstandingBalance: "0",
+      passwordHash: hashPassword(input.password),
+    })
+    .returning();
+  return row;
+}
+
 export async function ensureDemoData() {
   const existing = await db.select({ id: residents.id }).from(residents).limit(1);
-  if (existing.length > 0) return;
+  if (existing.length > 0) {
+    await backfillDemoPasswords();
+    return;
+  }
+
+  const adminHash = hashPassword(DEMO_ADMIN_PASSWORD);
+  const ownerHash = hashPassword(DEMO_OWNER_PASSWORD);
 
   await db.transaction(async (tx) => {
     const insertedResidents = await tx
       .insert(residents)
       .values([
-        { fullName: "Andrea Morales", email: "andrea.morales@phnexo.pa", unit: "Torre A · 3B", role: "administrador", phone: "+507 6000-1212", accountStatus: "al_dia" },
-        { fullName: "Carlos Mendoza", email: "carlos.mendoza@email.com", unit: "Torre A · 2A", role: "propietario", phone: "+507 6501-3480", accountStatus: "pendiente", outstandingBalance: "81.60" },
-        { fullName: "Elena Ríos", email: "elena.rios@email.com", unit: "Torre B · 6C", role: "propietario", phone: "+507 6623-1109", accountStatus: "al_dia" },
-        { fullName: "Luis Ortega", email: "luis.ortega@email.com", unit: "Torre B · 1D", role: "propietario", phone: "+507 6912-7341", accountStatus: "vencido", outstandingBalance: "122.40" },
-        { fullName: "Mariana Chen", email: "mariana.chen@email.com", unit: "Torre C · 4A", role: "propietario", phone: "+507 6482-5302", accountStatus: "pendiente", outstandingBalance: "40.80" },
-        { fullName: "Daniel Castillo", email: "daniel.castillo@email.com", unit: "Torre C · 7B", role: "propietario", phone: "+507 6204-0945", accountStatus: "al_dia" },
+        { fullName: "Andrea Morales", email: "andrea.morales@phnexo.pa", unit: "Torre A · 3B", role: "administrador", phone: "+507 6000-1212", accountStatus: "al_dia", passwordHash: adminHash },
+        { fullName: "Carlos Mendoza", email: "carlos.mendoza@email.com", unit: "Torre A · 2A", role: "propietario", phone: "+507 6501-3480", accountStatus: "pendiente", outstandingBalance: "81.60", passwordHash: ownerHash },
+        { fullName: "Elena Ríos", email: "elena.rios@email.com", unit: "Torre B · 6C", role: "propietario", phone: "+507 6623-1109", accountStatus: "al_dia", passwordHash: ownerHash },
+        { fullName: "Luis Ortega", email: "luis.ortega@email.com", unit: "Torre B · 1D", role: "propietario", phone: "+507 6912-7341", accountStatus: "vencido", outstandingBalance: "122.40", passwordHash: ownerHash },
+        { fullName: "Mariana Chen", email: "mariana.chen@email.com", unit: "Torre C · 4A", role: "propietario", phone: "+507 6482-5302", accountStatus: "pendiente", outstandingBalance: "40.80", passwordHash: ownerHash },
+        { fullName: "Daniel Castillo", email: "daniel.castillo@email.com", unit: "Torre C · 7B", role: "propietario", phone: "+507 6204-0945", accountStatus: "al_dia", passwordHash: ownerHash },
       ])
       .returning({ id: residents.id, email: residents.email });
 
     const byEmail = new Map(insertedResidents.map((resident) => [resident.email, resident.id]));
 
     await tx.insert(phFunds).values({
-      name: "Fondo común PH Nexo",
+      name: "Fondo común PH Parque Central",
       currentBalance: "12840.55",
       monthlyFee: "40.80",
       monthlyBudget: "4896.00",

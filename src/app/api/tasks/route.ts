@@ -1,6 +1,11 @@
 import { createMaintenanceTask, ensureDemoData } from "@/lib/ph-data";
+import { getSessionFromRequest } from "@/lib/auth";
+
 export const dynamic = "force-dynamic";
+
 export async function POST(request: Request) {
+  const session = getSessionFromRequest(request);
+  if (!session) return Response.json({ error: "Debes iniciar sesión." }, { status: 401 });
   try {
     const body = await request.json();
     if (!body.title?.trim() || !body.category?.trim() || !body.location?.trim()) {

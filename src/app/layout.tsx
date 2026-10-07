@@ -3,8 +3,8 @@ import type { ReactNode } from "react";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "Nexo PH | Gestión residencial",
-  description: "Portal de operación, finanzas y comunidad para propiedad horizontal.",
+  title: "PH Parque Central Arraiján | Gestión residencial",
+  description: "Portal de operación, finanzas y comunidad del PH Parque Central, Arraiján.",
 };
 
 export default function RootLayout({ children }: { children: ReactNode }) {

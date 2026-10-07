@@ -15,6 +15,7 @@ export const residents = pgTable("residents", {
   email: varchar("email", { length: 180 }).notNull().unique(),
   unit: varchar("unit", { length: 24 }).notNull(),
   role: varchar("role", { length: 24 }).notNull().default("propietario"),
+  passwordHash: text("password_hash"),
   phone: varchar("phone", { length: 32 }),
   accountStatus: varchar("account_status", { length: 24 }).notNull().default("al_dia"),
   outstandingBalance: numeric("outstanding_balance", { precision: 12, scale: 2 })
