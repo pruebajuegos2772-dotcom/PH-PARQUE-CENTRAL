@@ -62,13 +62,14 @@ Verifica en GitHub que **no** aparezca el archivo `.env`. Solo debe verse `.env.
 1. Crea una cuenta gratuita en [vercel.com](https://vercel.com) usando tu cuenta de GitHub.
 2. Selecciona **Add New → Project** e importa el repositorio `nexo-ph`.
 3. Vercel detectará automáticamente **Next.js**. No necesitas crear `vercel.json` ni cambiar el comando de build.
-4. Antes de pulsar **Deploy**, despliega la sección **Environment Variables** y crea esta variable:
+4. Antes de pulsar **Deploy**, despliega la sección **Environment Variables** y crea estas dos variables:
 
    | Nombre | Valor | Entornos |
    | --- | --- | --- |
    | `DATABASE_URL` | La cadena pooled completa de Neon | Production (y Preview si deseas probar previews) |
+   | `SESSION_SECRET` | Un texto aleatorio de al menos 16 caracteres (genera uno con `openssl rand -base64 32`) | Production (y Preview) |
 
-   No uses el prefijo `NEXT_PUBLIC_`: la URL de base de datos debe permanecer solo en el servidor.
+   No uses el prefijo `NEXT_PUBLIC_`: la URL de base de datos y el secreto de sesión deben permanecer solo en el servidor.
 
 5. Pulsa **Deploy**. Al terminar, Vercel mostrará una URL similar a:
 
