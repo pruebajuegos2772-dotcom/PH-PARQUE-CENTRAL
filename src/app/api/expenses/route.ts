@@ -1,5 +1,5 @@
 import { createExpense, ensureDemoData } from "@/lib/ph-data";
-
+export const dynamic = "force-dynamic";
 export async function POST(request: Request) {
   try {
     const body = await request.json();
