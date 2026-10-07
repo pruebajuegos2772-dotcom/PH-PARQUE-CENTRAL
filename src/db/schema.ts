@@ -80,5 +80,6 @@ export const ownerAccounts = pgTable("owner_accounts", {
   dueAmount: numeric("due_amount", { precision: 10, scale: 2 }).notNull().default("40.80"),
   paidAmount: numeric("paid_amount", { precision: 10, scale: 2 }).notNull().default("0"),
   status: varchar("status", { length: 24 }).notNull().default("pendiente"),
+  notes: text("notes"),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 });

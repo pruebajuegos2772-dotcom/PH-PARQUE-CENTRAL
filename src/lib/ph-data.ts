@@ -141,6 +141,7 @@ export async function getDashboardData() {
         dueAmount: ownerAccounts.dueAmount,
         paidAmount: ownerAccounts.paidAmount,
         status: ownerAccounts.status,
+        notes: ownerAccounts.notes,
         residentId: residents.id,
         residentName: residents.fullName,
         unit: residents.unit,
@@ -170,6 +171,7 @@ export async function getDashboardData() {
     expenses: expenseRows.map((expense) => ({ ...expense, amount: asNumber(expense.amount) })),
     accounts: accountRows.map((account) => ({
       ...account,
+      notes: account.notes ?? null,
       dueAmount: asNumber(account.dueAmount),
       paidAmount: asNumber(account.paidAmount),
       outstandingBalance: asNumber(account.outstandingBalance),
@@ -326,5 +328,107 @@ export async function deleteResidentByAdmin(id: number) {
   const rows = await db.select().from(residents).where(eq(residents.id, id)).limit(1);
   if (!rows[0]) throw new Error("Usuario no encontrado.");
   await db.delete(residents).where(eq(residents.id, id));
+  return { ok: true };
+}
+
+export const ACCOUNT_STATUSES = ["al_dia", "moroso", "pagado", "pendiente", "vencido"] as const;
+
+export function normalizeAccountStatus(value: unknown): string {
+  const v = String(value ?? "").trim().toLowerCase();
+  if (v === "al_dia" || v === "al dia" || v === "al día" || v === "aldia") return "al_dia";
+  if ((ACCOUNT_STATUSES as readonly string[]).includes(v)) return v;
+  return "pendiente";
+}
+
+function currentPeriodLabel(d = new Date()) {
+  return d.toISOString().slice(0, 7);
+}
+
+export async function listAccountsWithResidents() {
+  const rows = await db
+    .select({
+      id: ownerAccounts.id,
+      period: ownerAccounts.period,
+      dueDate: ownerAccounts.dueDate,
+      dueAmount: ownerAccounts.dueAmount,
+      paidAmount: ownerAccounts.paidAmount,
+      status: ownerAccounts.status,
+      notes: ownerAccounts.notes,
+      residentId: residents.id,
+      residentName: residents.fullName,
+      unit: residents.unit,
+      email: residents.email,
+      outstandingBalance: residents.outstandingBalance,
+    })
+    .from(ownerAccounts)
+    .innerJoin(residents, eq(ownerAccounts.residentId, residents.id))
+    .orderBy(desc(ownerAccounts.createdAt));
+  return rows.map((account) => ({
+    ...account,
+    notes: account.notes ?? null,
+    dueAmount: asNumber(account.dueAmount),
+    paidAmount: asNumber(account.paidAmount),
+    outstandingBalance: asNumber(account.outstandingBalance),
+  }));
+}
+
+export async function createAccountEntry(input: {
+  residentId: number;
+  dueAmount: number;
+  paidAmount?: number;
+  status?: string;
+  notes?: string;
+  dueDate?: string;
+}) {
+  if (!Number.isFinite(input.residentId) || input.residentId <= 0) throw new Error("Propietario inválido.");
+  if (!Number.isFinite(input.dueAmount) || input.dueAmount < 0) throw new Error("Cuota inválida.");
+  const paid = input.paidAmount ?? 0;
+  if (!Number.isFinite(paid) || paid < 0) throw new Error("Monto pagado inválido.");
+  const residentRows = await db.select().from(residents).where(eq(residents.id, input.residentId)).limit(1);
+  if (!residentRows[0]) throw new Error("Propietario no encontrado.");
+  const dueDate = input.dueDate || new Date().toISOString().slice(0, 10);
+  const [row] = await db
+    .insert(ownerAccounts)
+    .values({
+      residentId: input.residentId,
+      period: currentPeriodLabel(new Date(`${dueDate}T12:00:00`)),
+      dueDate,
+      dueAmount: String(Math.round(input.dueAmount * 100) / 100),
+      paidAmount: String(Math.round(paid * 100) / 100),
+      status: normalizeAccountStatus(input.status),
+      notes: input.notes?.trim() ? input.notes.trim().slice(0, 500) : null,
+    })
+    .returning();
+  return row;
+}
+
+export async function updateAccountEntry(
+  id: number,
+  input: { dueAmount?: number; paidAmount?: number; status?: string; notes?: string | null; dueDate?: string },
+) {
+  if (!Number.isFinite(id) || id <= 0) throw new Error("Cuenta inválida.");
+  const patch: Partial<typeof ownerAccounts.$inferInsert> = {};
+  if (input.dueAmount !== undefined) {
+    if (!Number.isFinite(input.dueAmount) || input.dueAmount < 0) throw new Error("Cuota inválida.");
+    patch.dueAmount = String(Math.round(input.dueAmount * 100) / 100);
+  }
+  if (input.paidAmount !== undefined) {
+    if (!Number.isFinite(input.paidAmount) || input.paidAmount < 0) throw new Error("Monto pagado inválido.");
+    patch.paidAmount = String(Math.round(input.paidAmount * 100) / 100);
+  }
+  if (input.status !== undefined) patch.status = normalizeAccountStatus(input.status);
+  if (input.notes !== undefined) {
+    patch.notes = input.notes && String(input.notes).trim() ? String(input.notes).trim().slice(0, 500) : null;
+  }
+  if (input.dueDate) patch.dueDate = input.dueDate;
+  if (Object.keys(patch).length === 0) throw new Error("No hay cambios para guardar.");
+  const [row] = await db.update(ownerAccounts).set(patch).where(eq(ownerAccounts.id, id)).returning();
+  if (!row) throw new Error("Cuenta no encontrada.");
+  return { ...row, dueAmount: asNumber(row.dueAmount), paidAmount: asNumber(row.paidAmount) };
+}
+
+export async function deleteAccountEntry(id: number) {
+  if (!Number.isFinite(id) || id <= 0) throw new Error("Cuenta inválida.");
+  await db.delete(ownerAccounts).where(eq(ownerAccounts.id, id));
   return { ok: true };
 }

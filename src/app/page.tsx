@@ -34,6 +34,7 @@ import {
 } from "lucide-react";
 import { FormEvent, useEffect, useMemo, useState } from "react";
 import { PhLogo } from "@/components/ph-logo";
+import { AccountsPanel } from "@/components/accounts-panel";
 
 type View = "resumen" | "operacion" | "reportes" | "finanzas" | "cuentas" | "usuarios";
 type ModalKind = "task" | "report" | "expense" | "fund" | "user" | null;
@@ -93,13 +94,14 @@ type Expense = {
   status: string;
 };
 
-type Account = {
+export type Account = {
   id: number;
   period: string;
   dueDate: string;
   dueAmount: number;
   paidAmount: number;
   status: string;
+  notes: string | null;
   residentId: number;
   residentName: string;
   unit: string;
@@ -157,18 +159,31 @@ const initialsOf = (name: string) =>
     .map((part) => part[0]?.toUpperCase() ?? "")
     .join("") || "PH";
 
+export function accountStatusLabel(value: string) {
+  const v = value.toLowerCase();
+  if (v === "al_dia") return "Al día";
+  if (v === "moroso") return "Moroso";
+  if (v === "pagado") return "Pagado";
+  if (v === "pendiente") return "Pendiente";
+  if (v === "vencido") return "Vencido";
+  return statusText(value);
+}
+
 function StatusPill({ value, compact = false }: { value: string; compact?: boolean }) {
   const normalized = value.toLowerCase();
   const className = normalized.includes("pagado") || normalized.includes("dia") || normalized.includes("complet") || normalized.includes("resuelt")
     ? "bg-emerald-50 text-emerald-700 ring-emerald-100"
-    : normalized.includes("venc") || normalized.includes("alta") || normalized.includes("pend")
+    : normalized.includes("moroso") || normalized.includes("venc") || normalized.includes("alta")
       ? "bg-rose-50 text-rose-700 ring-rose-100"
-      : normalized.includes("progreso") || normalized.includes("revision") || normalized.includes("asign")
+      : normalized.includes("pend") || normalized.includes("progreso") || normalized.includes("revision") || normalized.includes("asign")
         ? "bg-amber-50 text-amber-700 ring-amber-100"
         : "bg-slate-100 text-slate-600 ring-slate-200";
+  const label = value.toLowerCase() === "al_dia" || value.toLowerCase() === "moroso" || ["pagado", "pendiente", "vencido"].includes(value.toLowerCase())
+    ? accountStatusLabel(value)
+    : statusText(value);
   return (
     <span className={`inline-flex items-center rounded-full font-semibold ring-1 ${compact ? "px-2.5 py-1 text-[10px]" : "px-3 py-1.5 text-xs"} ${className}`}>
-      {statusText(value)}
+      {label}
     </span>
   );
 }
@@ -504,7 +519,7 @@ export default function HomePage() {
               {activeView === "operacion" && data && <OperationView tasks={data.tasks} role={role} onAdd={() => openModal("task")} />}
               {activeView === "reportes" && data && <ReportsView reports={data.reports} onAdd={() => openModal("report")} />}
               {activeView === "finanzas" && data && <FinanceView data={data} role={role} onAddExpense={() => openModal("expense")} onAddFund={() => openModal("fund")} />}
-              {activeView === "cuentas" && data && <AccountsView accounts={filteredAccounts} allAccounts={data.accounts} query={query} onQuery={setQuery} fee={monthlyFee} role={role} currentEmail={user.email} onAddUser={() => openModal("user")} />}
+              {activeView === "cuentas" && data && <AccountsPanel accounts={filteredAccounts} allAccounts={data.accounts} residents={data.residents} query={query} onQuery={setQuery} fee={monthlyFee} role={role} currentEmail={user.email} onChanged={loadData} notify={setMessage} />}
               {activeView === "usuarios" && data && role === "Administrador" && (
                 <UsersView
                   initialUsers={data.residents}
@@ -678,13 +693,6 @@ function FinanceView({ data, role, onAddExpense, onAddFund }: { data: DashboardD
   const maxExpense = Math.max(...data.expenses.map((expense) => expense.amount), 1);
   const byCategory = data.expenses.reduce<Record<string, number>>((total, expense) => ({ ...total, [expense.category]: (total[expense.category] || 0) + expense.amount }), {});
   return <div className="space-y-5"><section className="overflow-hidden rounded-[28px] bg-[#194c43] text-white shadow-[0_14px_34px_rgba(24,73,65,0.18)]"><div className="grid gap-8 p-6 sm:p-8 lg:grid-cols-2"><div><p className="text-xs font-bold uppercase tracking-[0.16em] text-[#b8d6ce]">Saldo del fondo común</p><p className="mt-3 text-[38px] font-bold tracking-[-0.055em] sm:text-[46px]">{formatMoney(data.fund?.currentBalance ?? 0)}</p><p className="mt-2 max-w-sm text-sm leading-6 text-[#bdd4ce]">Fondo disponible para servicios, mantenimiento y mejoras de las áreas comunes.</p>{isAdmin ? <div className="mt-6 flex flex-wrap gap-3"><button onClick={onAddFund} className="flex items-center gap-2 rounded-xl bg-[#f4dc89] px-4 py-2.5 text-sm font-bold text-[#244a42] transition hover:bg-[#ffe99b]"><Plus size={17} /> Ajustar fondo</button><button onClick={onAddExpense} className="flex items-center gap-2 rounded-xl border border-white/20 px-4 py-2.5 text-sm font-bold text-white transition hover:bg-white/10"><ReceiptText size={17} /> Registrar gasto</button></div> : <p className="mt-6 rounded-xl bg-white/10 p-3 text-xs leading-5 text-[#cfe0da]">Vista de consulta. Solo la administración puede registrar gastos o ajustar el fondo.</p>}</div><div className="grid grid-cols-2 gap-3 self-end"><div className="rounded-2xl bg-white/[0.09] p-4"><ArrowDownRight className="text-[#f0d873]" size={19} /><p className="mt-5 text-xl font-bold">{formatMoney(data.summary.totalPaid)}</p><p className="mt-1 text-xs text-[#bed6cf]">Cobrado este mes</p></div><div className="rounded-2xl bg-white/[0.09] p-4"><ArrowUpRight className="text-[#e9a486]" size={19} /><p className="mt-5 text-xl font-bold">{formatMoney(data.summary.totalExpenses)}</p><p className="mt-1 text-xs text-[#bed6cf]">Gastos registrados</p></div></div></div></section><div className="grid gap-5 xl:grid-cols-5"><section className="rounded-[26px] border border-[#e1ebe6] bg-white p-5 shadow-[0_8px_30px_rgba(23,63,53,0.035)] sm:p-6 xl:col-span-3"><div className="flex items-center justify-between"><div><h2 className="text-lg font-bold text-[#294e46]">Gastos del mes</h2><p className="mt-1 text-sm text-[#7b9089]">Servicios, proveedores y compras del PH.</p></div>{isAdmin && <button onClick={onAddExpense} className="text-xs font-bold text-[#42796c]">Agregar gasto <Plus className="inline" size={14} /></button>}</div><div className="mt-5 space-y-4">{data.expenses.map((expense) => <div key={expense.id}><div className="mb-1.5 flex items-center justify-between gap-4 text-xs"><span className="font-bold text-[#43665e]">{expense.description}</span><span className="font-bold text-[#264c44]">{formatMoney(expense.amount)}</span></div><div className="h-2 overflow-hidden rounded-full bg-[#edf2ef]"><div className="h-full rounded-full bg-[#7eae9f]" style={{ width: `${(expense.amount / maxExpense) * 100}%` }} /></div><p className="mt-1.5 text-[11px] text-[#8b9b96]">{expense.vendor} · {expense.category}</p></div>)}</div></section><section className="rounded-[26px] border border-[#e1ebe6] bg-white p-5 shadow-[0_8px_30px_rgba(23,63,53,0.035)] sm:p-6 xl:col-span-2"><h2 className="text-lg font-bold text-[#294e46]">Distribución</h2><p className="mt-1 text-sm text-[#7b9089]">Por categoría de gasto</p><div className="mt-6 space-y-4">{Object.entries(byCategory).map(([category, total], index) => { const colors = ["bg-[#4c8d7d]", "bg-[#e2b654]", "bg-[#df7e61]", "bg-[#789bbd]", "bg-[#9d8bb5]"]; return <div key={category} className="flex items-center gap-3"><span className={`size-2.5 rounded-full ${colors[index % colors.length]}`} /><span className="flex-1 text-sm font-semibold text-[#58726b]">{category}</span><span className="text-sm font-bold text-[#2b5048]">{formatMoney(total)}</span></div>; })}</div><div className="mt-6 rounded-2xl bg-[#eff6f2] p-4"><p className="text-xs font-bold text-[#53756d]">Presupuesto mensual</p><div className="mt-2 flex items-end justify-between"><p className="text-xl font-bold tracking-[-0.04em] text-[#245247]">{formatMoney(data.fund?.monthlyBudget ?? 0)}</p><p className="text-xs font-bold text-[#528271]">Disponible {formatMoney(Math.max(0, (data.fund?.monthlyBudget ?? 0) - data.summary.totalExpenses))}</p></div></div></section></div></div>;
-}
-
-function AccountsView({ accounts, allAccounts, query, onQuery, fee, role, currentEmail, onAddUser }: { accounts: Account[]; allAccounts: Account[]; query: string; onQuery: (value: string) => void; fee: number; role: Role; currentEmail: string; onAddUser: () => void }) {
-  const paid = allAccounts.filter((account) => account.status === "pagado").length;
-  const overdue = allAccounts.filter((account) => account.status === "vencido").length;
-  const ownAccount = allAccounts.find((account) => account.email.toLowerCase() === currentEmail.toLowerCase()) || allAccounts[0];
-  return <div className="space-y-5">{role === "Propietario" && ownAccount && <section className="rounded-[26px] bg-[#edf6f1] p-5 sm:p-6"><div className="flex flex-col justify-between gap-4 sm:flex-row sm:items-center"><div><p className="text-xs font-bold uppercase tracking-[0.14em] text-[#578074]">Mi estado de cuenta · {ownAccount.unit}</p><p className="mt-2 text-[30px] font-bold tracking-[-0.05em] text-[#214b42]">{ownAccount.status === "pagado" ? "¡Estás al día!" : formatMoney(ownAccount.dueAmount - ownAccount.paidAmount)}</p><p className="mt-1 text-sm text-[#638078]">Cuota de administración: {formatMoney(fee)} al mes.</p></div><StatusPill value={ownAccount.status} /></div></section>}<div className="grid gap-4 sm:grid-cols-3"><MetricCard label="Propietarios al día" value={`${paid}/${allAccounts.length}`} detail="Cuotas de febrero" icon={Check} tone="green" /><MetricCard label="Saldos por cobrar" value={formatMoney(allAccounts.reduce((total, account) => total + Math.max(0, account.dueAmount - account.paidAmount), 0))} detail={`${overdue} cuentas vencidas`} icon={BadgeDollarSign} tone="coral" /><MetricCard label="Cuota mensual" value={formatMoney(fee)} detail="Por apartamento" icon={ReceiptText} tone="gold" /></div><section className="overflow-hidden rounded-[26px] border border-[#e1ebe6] bg-white shadow-[0_8px_30px_rgba(23,63,53,0.035)]"><div className="flex flex-col gap-3 border-b border-[#ebf0ed] p-5 sm:flex-row sm:items-center sm:justify-between sm:p-6"><div><h2 className="text-lg font-bold text-[#284e45]">{role === "Administrador" ? "Cuentas de propietarios" : "Movimientos de la comunidad"}</h2><p className="mt-1 text-sm text-[#7a8e88]">Corte al 10 de febrero de 2025.</p></div><div className="flex flex-col gap-2 sm:flex-row sm:items-center">{role === "Administrador" && <><button onClick={onAddUser} className="flex items-center justify-center gap-2 rounded-xl bg-[#204f46] px-4 py-2.5 text-xs font-bold text-white transition hover:bg-[#163f38]"><Plus size={15} /> Crear acceso</button><label className="flex h-10 items-center gap-2 rounded-xl border border-[#dce7e2] px-3 text-[#7c928b]"><Search size={16} /><input value={query} onChange={(event) => onQuery(event.target.value)} placeholder="Buscar propietario" className="w-40 bg-transparent text-sm text-[#31544d] outline-none placeholder:text-[#9aaba6]" /></label></>}</div></div><div className="overflow-x-auto"><table className="min-w-[720px] w-full text-left"><thead className="bg-[#f8faf8] text-[10px] uppercase tracking-[0.1em] text-[#82958f]"><tr><th className="px-6 py-3 font-bold">Propietario / unidad</th><th className="px-4 py-3 font-bold">Período</th><th className="px-4 py-3 font-bold">Cuota</th><th className="px-4 py-3 font-bold">Pagado</th><th className="px-4 py-3 font-bold">Estado</th><th className="px-6 py-3" /></tr></thead><tbody className="divide-y divide-[#edf1ee]">{accounts.map((account) => <tr key={account.id} className="text-sm"><td className="px-6 py-4"><p className="font-bold text-[#31544d]">{account.residentName}</p><p className="mt-0.5 text-xs text-[#859892]">{account.unit}</p></td><td className="px-4 py-4 text-[#70857e]">{account.period}</td><td className="px-4 py-4 font-semibold text-[#46645d]">{formatMoney(account.dueAmount)}</td><td className="px-4 py-4 font-semibold text-[#46645d]">{formatMoney(account.paidAmount)}</td><td className="px-4 py-4"><StatusPill value={account.status} compact /></td><td className="px-6 py-4"><button className="grid size-8 place-items-center rounded-lg text-[#76908a] hover:bg-[#eff5f1]"><MoreHorizontal size={18} /></button></td></tr>)}</tbody></table></div>{accounts.length === 0 && <div className="p-6"><EmptyState title="No encontramos coincidencias" detail="Prueba con otro nombre, unidad o estado." icon={Search} /></div>}</section></div>;
 }
 
 function UsersView({ initialUsers, currentEmail, onAddUser, onChanged, notify }: { initialUsers: ManagedUser[]; currentEmail: string; onAddUser: () => void; onChanged: () => Promise<void>; notify: (message: string) => void }) {
