@@ -1,0 +1,14 @@
+node_modules/
+.next/
+out/
+coverage/
+*.log
+
+# Local and production secrets
+.env
+.env.local
+.env.*.local
+.env.production
+
+# Keep the safe environment template in source control
+!.env.example
