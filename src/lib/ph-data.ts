@@ -61,10 +61,26 @@ export async function createResidentWithPassword(input: {
   return row;
 }
 
+export async function ensureFundExists() {
+  const [fund] = await db.select().from(phFunds).limit(1);
+  if (fund) return fund;
+  const [created] = await db
+    .insert(phFunds)
+    .values({
+      name: "Fondo común PH Parque Central",
+      currentBalance: "0",
+      monthlyFee: "40.80",
+      monthlyBudget: "0",
+    })
+    .returning();
+  return created;
+}
+
 export async function ensureDemoData() {
   const existing = await db.select({ id: residents.id }).from(residents).limit(1);
   if (existing.length > 0) {
     await backfillDemoPasswords();
+    await ensureFundExists();
     return;
   }
 
@@ -266,9 +282,15 @@ export async function createExpense(input: {
 }
 
 export async function updateFundBalance(amount: number) {
-  const [currentFund] = await db.select().from(phFunds).limit(1);
+  if (!Number.isFinite(amount) || amount === 0) {
+    throw new Error("Monto inválido para ajustar el fondo.");
+  }
+  let [currentFund] = await db.select().from(phFunds).limit(1);
+  if (!currentFund) {
+    currentFund = await ensureFundExists();
+  }
   if (!currentFund) throw new Error("No existe un fondo configurado");
-  const nextBalance = asNumber(currentFund.currentBalance) + amount;
+  const nextBalance = Math.round((asNumber(currentFund.currentBalance) + amount) * 100) / 100;
   const [fund] = await db
     .update(phFunds)
     .set({ currentBalance: String(nextBalance), updatedAt: new Date() })
