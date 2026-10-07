@@ -553,6 +553,7 @@ function LoginScreen({ email, password, error, isLoggingIn, onEmail, onPassword,
             {isLoggingIn ? "Verificando…" : <><Check size={17} /> Entrar al portal</>}
           </button>
           <p className="mt-5 text-center text-[11px] leading-5 text-[#94a39f]"><ShieldCheck className="mr-1 inline" size={12} /> Tu sesión queda protegida en este dispositivo por 7 días.</p>
+          <p className="mt-2 text-center text-[10px] font-bold tracking-widest text-[#b6c4bf]">PH PARQUE CENTRAL · V2 LOGIN</p>
         </form>
       </div>
     </main>
