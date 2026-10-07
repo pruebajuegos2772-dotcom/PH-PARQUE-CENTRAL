@@ -6,6 +6,9 @@ export const dynamic = "force-dynamic";
 export async function POST(request: Request) {
   const session = getSessionFromRequest(request);
   if (!session) return Response.json({ error: "Debes iniciar sesión." }, { status: 401 });
+  if (session.role !== "administrador") {
+    return Response.json({ error: "Solo la administración puede crear tareas de mantenimiento." }, { status: 403 });
+  }
   try {
     const body = await request.json();
     if (!body.title?.trim() || !body.category?.trim() || !body.location?.trim()) {

@@ -174,7 +174,16 @@ export async function getDashboardData() {
       paidAmount: asNumber(account.paidAmount),
       outstandingBalance: asNumber(account.outstandingBalance),
     })),
-    residents: residentRows.map((resident) => ({ ...resident, outstandingBalance: asNumber(resident.outstandingBalance) })),
+    residents: residentRows.map((resident) => ({
+      id: resident.id,
+      fullName: resident.fullName,
+      email: resident.email,
+      unit: resident.unit,
+      role: resident.role,
+      phone: resident.phone,
+      accountStatus: resident.accountStatus,
+      outstandingBalance: asNumber(resident.outstandingBalance),
+    })),
     summary: {
       totalExpenses,
       totalBilled,
@@ -271,4 +280,51 @@ export async function getExpenseCategories() {
     .select({ category: expenses.category, total: sql<string>`sum(${expenses.amount})` })
     .from(expenses)
     .groupBy(expenses.category);
+}
+
+export async function listResidentsForAdmin() {
+  const rows = await db.select().from(residents).orderBy(residents.fullName);
+  return rows.map((row) => ({
+    id: row.id,
+    fullName: row.fullName,
+    email: row.email,
+    unit: row.unit,
+    role: row.role,
+    phone: row.phone,
+    accountStatus: row.accountStatus,
+    outstandingBalance: asNumber(row.outstandingBalance),
+    createdAt: row.createdAt,
+  }));
+}
+
+export async function updateResidentByAdmin(
+  id: number,
+  input: { fullName?: string; unit?: string; phone?: string; role?: string; password?: string },
+) {
+  const patch: Partial<typeof residents.$inferInsert> = {};
+  if (input.fullName?.trim()) patch.fullName = input.fullName.trim();
+  if (input.unit?.trim()) patch.unit = input.unit.trim();
+  if (typeof input.phone === "string") patch.phone = input.phone.trim() || null;
+  if (input.role === "administrador" || input.role === "propietario") patch.role = input.role;
+  if (input.password) {
+    if (input.password.length < 6) throw new Error("La contraseña debe tener al menos 6 caracteres.");
+    patch.passwordHash = hashPassword(input.password);
+  }
+  if (Object.keys(patch).length === 0) throw new Error("No hay cambios para guardar.");
+  const [row] = await db.update(residents).set(patch).where(eq(residents.id, id)).returning();
+  if (!row) throw new Error("Usuario no encontrado.");
+  return {
+    id: row.id,
+    fullName: row.fullName,
+    email: row.email,
+    unit: row.unit,
+    role: row.role,
+  };
+}
+
+export async function deleteResidentByAdmin(id: number) {
+  const rows = await db.select().from(residents).where(eq(residents.id, id)).limit(1);
+  if (!rows[0]) throw new Error("Usuario no encontrado.");
+  await db.delete(residents).where(eq(residents.id, id));
+  return { ok: true };
 }

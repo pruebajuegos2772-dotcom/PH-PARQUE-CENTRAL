@@ -34,7 +34,14 @@ Desde la carpeta del proyecto, con `DATABASE_URL` configurada en `.env`, ejecuta
 npx drizzle-kit push
 ```
 
-El comando crea las tablas de propietarios, tareas, reportes, cuentas, gastos y fondo común en la base de datos de Neon. La primera vez que se abra el dashboard, la app también agregará los datos de demostración.
+El comando crea las tablas de propietarios, tareas, reportes, cuentas, gastos y fondo común en la base de datos de Neon. La primera vez que se inicie sesión, la app preparará los datos iniciales del PH.
+
+Roles del portal:
+
+- **Administrador**: ve todo y puede crear tareas, gastos, ajustes de fondo, reportes y gestionar usuarios (crear, editar datos, cambiar contraseñas y eliminar accesos) desde la sección **Usuarios**.
+- **Residente / Propietario**: puede consultar todo el portal, pero solo puede crear **reportes de daños**. No ve botones de creación en operación ni finanzas.
+
+Crea los accesos reales desde el portal (**Usuarios → Crear acceso**, solo administradores) y elimina o restablece cualquier cuenta inicial antes de operar con datos reales. El login ya no muestra cuentas de demostración.
 
 Para comprobar el proyecto antes de subirlo:
 
@@ -104,11 +111,15 @@ git commit -m "Actualizar esquema de datos"
 git push
 ```
 
-## Seguridad antes de usarlo con una comunidad real
+## Seguridad y roles
 
-La pantalla actual incluye un selector de vista para **Administrador** y **Propietario**, útil para demostración. No sustituye una autenticación real con contraseñas, recuperación de acceso y permisos validados en el servidor.
+El portal ya incluye login real con contraseñas cifradas, sesión por cookie segura y permisos por rol validados en el servidor:
 
-Puedes publicar el portal como demostración o piloto privado siguiendo esta guía. Antes de registrar información financiera real, datos personales o abrirlo al público, implementa autenticación real y restringe las rutas API por rol.
+- Solo administradores pueden crear tareas, registrar gastos, ajustar el fondo y gestionar usuarios.
+- Los residentes pueden consultar todo, pero solo crear reportes de daños.
+- Solo administradores pueden abrir **Usuarios**, cambiar contraseñas y eliminar accesos.
+
+Antes de operar con datos reales, configura un `SESSION_SECRET` largo en Vercel, crea los accesos reales desde **Usuarios** y elimina las cuentas iniciales si ya no las necesitas.
 
 ## Límites de los planes gratuitos
 

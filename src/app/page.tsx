@@ -35,8 +35,19 @@ import {
 import { FormEvent, useEffect, useMemo, useState } from "react";
 import { PhLogo } from "@/components/ph-logo";
 
-type View = "resumen" | "operacion" | "reportes" | "finanzas" | "cuentas";
+type View = "resumen" | "operacion" | "reportes" | "finanzas" | "cuentas" | "usuarios";
 type ModalKind = "task" | "report" | "expense" | "fund" | "user" | null;
+
+type ManagedUser = {
+  id: number;
+  fullName: string;
+  email: string;
+  unit: string;
+  role: string;
+  phone: string | null;
+  accountStatus: string;
+  outstandingBalance: number;
+};
 type Role = "Administrador" | "Propietario";
 
 type AuthUser = {
@@ -102,7 +113,7 @@ type DashboardData = {
   reports: Report[];
   expenses: Expense[];
   accounts: Account[];
-  residents: Array<{ id: number; fullName: string; unit: string; accountStatus: string; outstandingBalance: number }>;
+  residents: ManagedUser[];
   summary: {
     totalExpenses: number;
     totalBilled: number;
@@ -118,8 +129,9 @@ const nav: Array<{ id: View; label: string; icon: LucideIcon; adminOnly?: boolea
   { id: "resumen", label: "Resumen", icon: LayoutDashboard },
   { id: "operacion", label: "Operación", icon: ClipboardCheck },
   { id: "reportes", label: "Reportes y denuncias", icon: CircleAlert },
-  { id: "finanzas", label: "Finanzas", icon: WalletCards, adminOnly: true },
+  { id: "finanzas", label: "Finanzas", icon: WalletCards },
   { id: "cuentas", label: "Estado de cuenta", icon: ReceiptText },
+  { id: "usuarios", label: "Usuarios", icon: UsersRound, adminOnly: true },
 ];
 
 const taskIcons: Record<string, LucideIcon> = {
@@ -174,7 +186,7 @@ function EmptyState({ title, detail, icon: Icon }: { title: string; detail: stri
 export default function HomePage() {
   const [user, setUser] = useState<AuthUser | null>(null);
   const [authChecking, setAuthChecking] = useState(true);
-  const [loginEmail, setLoginEmail] = useState("andrea.morales@phnexo.pa");
+  const [loginEmail, setLoginEmail] = useState("");
   const [loginPassword, setLoginPassword] = useState("");
   const [loginError, setLoginError] = useState("");
   const [isLoggingIn, setIsLoggingIn] = useState(false);
@@ -351,10 +363,11 @@ export default function HomePage() {
   const monthlyFee = data?.fund?.monthlyFee ?? 40.8;
   const pageLabels: Record<View, { eyebrow: string; title: string; detail: string }> = {
     resumen: { eyebrow: "Vista general", title: "Así está tu PH hoy", detail: "Controla la operación, los cobros y el mantenimiento desde un solo lugar." },
-    operacion: { eyebrow: "Mantenimiento", title: "Plan de operación", detail: "Coordina las tareas y proveedores de las áreas comunes." },
-    reportes: { eyebrow: "Comunidad", title: "Reportes y denuncias", detail: "Da seguimiento transparente a cada incidencia de los residentes." },
-    finanzas: { eyebrow: "Administración", title: "Finanzas del PH", detail: "Revisa el fondo común, los ingresos y egresos del mes." },
+    operacion: { eyebrow: "Mantenimiento", title: "Plan de operación", detail: "Consulta las tareas. Solo la administración puede crear nuevas órdenes." },
+    reportes: { eyebrow: "Comunidad", title: "Reportes y denuncias", detail: "Crea y da seguimiento a cada incidencia de los residentes." },
+    finanzas: { eyebrow: "Administración", title: "Finanzas del PH", detail: "Consulta el fondo común y los gastos. Solo la administración puede registrar movimientos." },
     cuentas: { eyebrow: "Propietarios", title: "Estado de cuenta", detail: "Consulta cuotas, pagos y saldos pendientes de cada unidad." },
+    usuarios: { eyebrow: "Administración", title: "Usuarios y accesos", detail: "Crea accesos, edita datos y restablece contraseñas. Solo visible para administradores." },
   };
 
   if (authChecking) {
@@ -443,7 +456,10 @@ export default function HomePage() {
                 <div className="absolute right-0 top-12 w-60 overflow-hidden rounded-2xl border border-[#dde8e3] bg-white p-1.5 shadow-[0_18px_45px_rgba(26,64,57,0.16)]">
                   <div className="px-3 py-2.5"><p className="text-xs font-bold text-[#25473f]">{user.name}</p><p className="text-[11px] text-[#81938e]">{user.email}</p></div>
                   {role === "Administrador" && (
-                    <button onClick={() => openModal("user")} className="flex w-full items-center gap-2 rounded-xl px-3 py-2.5 text-sm font-semibold text-[#45625b] hover:bg-[#f1f6f3]"><UserRound size={16} /> Crear acceso</button>
+                    <>
+                      <button onClick={() => { chooseView("usuarios"); }} className="flex w-full items-center gap-2 rounded-xl px-3 py-2.5 text-sm font-semibold text-[#45625b] hover:bg-[#f1f6f3]"><UsersRound size={16} /> Gestionar usuarios</button>
+                      <button onClick={() => openModal("user")} className="flex w-full items-center gap-2 rounded-xl px-3 py-2.5 text-sm font-semibold text-[#45625b] hover:bg-[#f1f6f3]"><UserRound size={16} /> Crear acceso</button>
+                    </>
                   )}
                   <button className="flex w-full items-center gap-2 rounded-xl px-3 py-2.5 text-sm font-semibold text-[#45625b] hover:bg-[#f1f6f3]"><Settings size={16} /> Mi perfil</button>
                   <div className="my-1 border-t border-[#edf1ee]" />
@@ -485,10 +501,19 @@ export default function HomePage() {
           {isLoading && !data ? <DashboardSkeleton /> : (
             <>
               {activeView === "resumen" && data && <SummaryView data={data} role={role} onAdd={(kind) => openModal(kind)} onNavigate={chooseView} />}
-              {activeView === "operacion" && data && <OperationView tasks={data.tasks} onAdd={() => openModal("task")} />}
+              {activeView === "operacion" && data && <OperationView tasks={data.tasks} role={role} onAdd={() => openModal("task")} />}
               {activeView === "reportes" && data && <ReportsView reports={data.reports} onAdd={() => openModal("report")} />}
-              {activeView === "finanzas" && data && <FinanceView data={data} onAddExpense={() => openModal("expense")} onAddFund={() => openModal("fund")} />}
+              {activeView === "finanzas" && data && <FinanceView data={data} role={role} onAddExpense={() => openModal("expense")} onAddFund={() => openModal("fund")} />}
               {activeView === "cuentas" && data && <AccountsView accounts={filteredAccounts} allAccounts={data.accounts} query={query} onQuery={setQuery} fee={monthlyFee} role={role} currentEmail={user.email} onAddUser={() => openModal("user")} />}
+              {activeView === "usuarios" && data && role === "Administrador" && (
+                <UsersView
+                  initialUsers={data.residents}
+                  currentEmail={user.email}
+                  onAddUser={() => openModal("user")}
+                  onChanged={loadData}
+                  notify={setMessage}
+                />
+              )}
             </>
           )}
         </section>
@@ -531,9 +556,9 @@ function LoginScreen({ email, password, error, isLoggingIn, onEmail, onPassword,
             <p className="mt-3 text-sm leading-6 text-[#c3d9d2]">Mantenimiento, reportes, fondo común y estados de cuenta en un solo lugar.</p>
           </div>
           <div className="mt-8 rounded-2xl bg-white/10 p-4 text-xs leading-5 text-[#cfe0da]">
-            <p className="font-bold text-white">Cuentas de demostración</p>
-            <p className="mt-2">Administración<br /><span className="font-bold text-[#f4dc89]">andrea.morales@phnexo.pa · Admin123*</span></p>
-            <p className="mt-2">Propietario<br /><span className="font-bold text-[#f4dc89]">carlos.mendoza@email.com · Parque123*</span></p>
+            <p className="font-bold text-white">Acceso por rol</p>
+            <p className="mt-2 leading-5 text-[#c3d9d2]">La administración crea tu correo y contraseña. Los residentes pueden consultar todo el portal y crear reportes de daños.</p>
+            <p className="mt-2 leading-5 text-[#c3d9d2]">Si no puedes entrar, contacta a la administración del PH para verificar tu acceso.</p>
           </div>
         </div>
         <form onSubmit={onSubmit} className="flex flex-col justify-center p-7 sm:p-9">
@@ -602,10 +627,25 @@ function SummaryView({ data, role, onAdd, onNavigate }: { data: DashboardData; r
           <div className="flex items-center justify-between"><div><h3 className="text-base font-bold text-[#2b4d46]">Acciones rápidas</h3><p className="mt-1 text-xs text-[#81948f]">Gestiona tu PH en segundos</p></div><Zap size={19} className="text-[#e5b840]" /></div>
           <div className="mt-5 grid grid-cols-2 gap-3">
             <QuickAction label="Reportar daño" icon={CircleAlert} onClick={() => onAdd("report")} coral />
-            <QuickAction label="Nueva tarea" icon={Plus} onClick={() => onAdd("task")} />
-            {role === "Administrador" && <QuickAction label="Registrar gasto" icon={ReceiptText} onClick={() => onAdd("expense")} />}
-            <QuickAction label="Ver cuentas" icon={UsersRound} onClick={() => onNavigate("cuentas")} />
+            {role === "Administrador" ? (
+              <>
+                <QuickAction label="Nueva tarea" icon={Plus} onClick={() => onAdd("task")} />
+                <QuickAction label="Registrar gasto" icon={ReceiptText} onClick={() => onAdd("expense")} />
+                <QuickAction label="Usuarios" icon={UsersRound} onClick={() => onNavigate("usuarios")} />
+              </>
+            ) : (
+              <>
+                <QuickAction label="Ver cuentas" icon={UsersRound} onClick={() => onNavigate("cuentas")} />
+                <QuickAction label="Ver finanzas" icon={WalletCards} onClick={() => onNavigate("finanzas")} />
+                <QuickAction label="Ver operación" icon={ClipboardCheck} onClick={() => onNavigate("operacion")} />
+              </>
+            )}
           </div>
+          {role !== "Administrador" && (
+            <p className="mt-4 rounded-xl bg-[#f0f6f2] p-3 text-[11px] leading-4 text-[#5e7b73]">
+              Como residente puedes consultar todo el portal y crear reportes de daños. La creación de tareas, gastos y usuarios es solo para administración.
+            </p>
+          )}
         </section>
       </div>
     </div>
@@ -621,21 +661,23 @@ function QuickAction({ label, icon: Icon, onClick, coral = false }: { label: str
   return <button onClick={onClick} className={`flex min-h-20 flex-col items-start justify-between rounded-2xl border p-3.5 text-left transition hover:-translate-y-0.5 ${coral ? "border-[#f2d6ce] bg-[#fff8f5] text-[#bd624a] hover:bg-[#ffefea]" : "border-[#e0eae5] bg-[#f9fbfa] text-[#416d62] hover:bg-[#edf5f1]"}`}><Icon size={18} /><span className="text-xs font-bold leading-4">{label}</span></button>;
 }
 
-function OperationView({ tasks, onAdd }: { tasks: Task[]; onAdd: () => void }) {
+function OperationView({ tasks, role, onAdd }: { tasks: Task[]; role: Role; onAdd: () => void }) {
+  const isAdmin = role === "Administrador";
   const groups = ["Todas", "Limpieza edificio", "Áreas verdes", "Iluminación", "Reparación estructural"];
   const [filter, setFilter] = useState("Todas");
   const list = filter === "Todas" ? tasks : tasks.filter((task) => task.category === filter);
-  return <div className="space-y-5"><div className="flex flex-col gap-3 rounded-[22px] border border-[#e0eae5] bg-white p-3 sm:flex-row sm:items-center sm:justify-between"><div className="flex gap-1.5 overflow-x-auto pb-1 sm:pb-0">{groups.map((group) => <button key={group} onClick={() => setFilter(group)} className={`whitespace-nowrap rounded-xl px-3 py-2 text-xs font-bold transition ${filter === group ? "bg-[#204f46] text-white" : "text-[#678079] hover:bg-[#eef4f0]"}`}>{group}</button>)}</div><button onClick={onAdd} className="flex shrink-0 items-center justify-center gap-2 rounded-xl bg-[#204f46] px-4 py-2.5 text-sm font-bold text-white transition hover:bg-[#163f38]"><Plus size={17} /> Crear tarea</button></div><div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">{list.map((task) => { const Icon = taskIcons[task.category] || Wrench; return <article key={task.id} className="relative overflow-hidden rounded-[24px] border border-[#e1ebe6] bg-white p-5 shadow-[0_8px_30px_rgba(23,63,53,0.035)]"><div className="absolute right-0 top-0 h-1.5 w-24 bg-[#78a99b]" /><div className="flex items-start justify-between gap-3"><div className="grid size-11 place-items-center rounded-2xl bg-[#edf5f1] text-[#407b6d]"><Icon size={21} /></div><StatusPill value={task.status} compact /></div><p className="mt-5 text-xs font-bold uppercase tracking-[0.12em] text-[#78938a]">{task.category}</p><h3 className="mt-1.5 text-base font-bold text-[#244940]">{task.title}</h3><p className="mt-2 min-h-10 text-sm leading-5 text-[#718780]">{task.description || "Tarea de mantenimiento para las áreas comunes."}</p><div className="mt-5 flex items-center justify-between border-t border-[#edf1ee] pt-4 text-xs font-semibold text-[#6a817b]"><span className="flex items-center gap-1.5"><CalendarDays size={14} /> {task.scheduledFor || "Por definir"}</span><span>{task.location}</span></div></article>})}</div>{list.length === 0 && <EmptyState title="Sin tareas en esta categoría" detail="Crea una orden para planificar el siguiente mantenimiento." icon={ClipboardCheck} />}</div>;
+  return <div className="space-y-5"><div className="flex flex-col gap-3 rounded-[22px] border border-[#e0eae5] bg-white p-3 sm:flex-row sm:items-center sm:justify-between"><div className="flex gap-1.5 overflow-x-auto pb-1 sm:pb-0">{groups.map((group) => <button key={group} onClick={() => setFilter(group)} className={`whitespace-nowrap rounded-xl px-3 py-2 text-xs font-bold transition ${filter === group ? "bg-[#204f46] text-white" : "text-[#678079] hover:bg-[#eef4f0]"}`}>{group}</button>)}</div>{isAdmin ? <button onClick={onAdd} className="flex shrink-0 items-center justify-center gap-2 rounded-xl bg-[#204f46] px-4 py-2.5 text-sm font-bold text-white transition hover:bg-[#163f38]"><Plus size={17} /> Crear tarea</button> : <p className="shrink-0 rounded-xl bg-[#f0f6f2] px-4 py-2.5 text-xs font-bold text-[#5e7b73]">Solo lectura · la creación es de administración</p>}</div><div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">{list.map((task) => { const Icon = taskIcons[task.category] || Wrench; return <article key={task.id} className="relative overflow-hidden rounded-[24px] border border-[#e1ebe6] bg-white p-5 shadow-[0_8px_30px_rgba(23,63,53,0.035)]"><div className="absolute right-0 top-0 h-1.5 w-24 bg-[#78a99b]" /><div className="flex items-start justify-between gap-3"><div className="grid size-11 place-items-center rounded-2xl bg-[#edf5f1] text-[#407b6d]"><Icon size={21} /></div><StatusPill value={task.status} compact /></div><p className="mt-5 text-xs font-bold uppercase tracking-[0.12em] text-[#78938a]">{task.category}</p><h3 className="mt-1.5 text-base font-bold text-[#244940]">{task.title}</h3><p className="mt-2 min-h-10 text-sm leading-5 text-[#718780]">{task.description || "Tarea de mantenimiento para las áreas comunes."}</p><div className="mt-5 flex items-center justify-between border-t border-[#edf1ee] pt-4 text-xs font-semibold text-[#6a817b]"><span className="flex items-center gap-1.5"><CalendarDays size={14} /> {task.scheduledFor || "Por definir"}</span><span>{task.location}</span></div></article>})}</div>{list.length === 0 && <EmptyState title="Sin tareas en esta categoría" detail="Crea una orden para planificar el siguiente mantenimiento." icon={ClipboardCheck} />}</div>;
 }
 
 function ReportsView({ reports, onAdd }: { reports: Report[]; onAdd: () => void }) {
   return <div className="grid gap-5 xl:grid-cols-5"><section className="rounded-[26px] border border-[#e1ebe6] bg-white p-5 shadow-[0_8px_30px_rgba(23,63,53,0.035)] sm:p-6 xl:col-span-3"><div className="flex items-center justify-between gap-3"><div><h2 className="text-lg font-bold text-[#244940]">Bandeja de incidencias</h2><p className="mt-1 text-sm text-[#7d918b]">Cada reporte recibe seguimiento visible.</p></div><button onClick={onAdd} className="flex shrink-0 items-center gap-2 rounded-xl bg-[#d86445] px-3.5 py-2.5 text-sm font-bold text-white"><Plus size={16} /> Reportar</button></div><div className="mt-5 divide-y divide-[#edf1ee]">{reports.map((report) => <article key={report.id} className="flex gap-3 py-4 first:pt-0"><div className={`mt-0.5 grid size-10 shrink-0 place-items-center rounded-xl ${report.priority === "alta" ? "bg-[#fff0ec] text-[#d86648]" : "bg-[#edf4f1] text-[#538076]"}`}><CircleAlert size={19} /></div><div className="min-w-0 flex-1"><div className="flex flex-wrap items-center justify-between gap-2"><p className="font-bold text-[#2b5048]">{report.title}</p><StatusPill value={report.status} compact /></div><p className="mt-1 text-sm leading-5 text-[#71867f]">{report.description}</p><div className="mt-3 flex flex-wrap items-center gap-x-4 gap-y-1 text-xs font-semibold text-[#84958f]"><span>{report.location}</span><span>Por {report.reporterName}</span><span className="text-[#557a70]">{report.category}</span></div></div></article>)}</div></section><aside className="rounded-[26px] bg-[#eff6f2] p-5 sm:p-6 xl:col-span-2"><div className="grid size-11 place-items-center rounded-2xl bg-white text-[#4e8577]"><ShieldCheck size={22} /></div><h3 className="mt-5 text-xl font-bold tracking-[-0.04em] text-[#285047]">Una comunidad que escucha</h3><p className="mt-2 text-sm leading-6 text-[#668078]">Los reportes quedan registrados y reciben actualizaciones hasta su resolución.</p><div className="mt-6 space-y-3"><div className="rounded-2xl bg-white p-4"><p className="text-[25px] font-bold tracking-[-0.04em] text-[#29584e]">{reports.filter((r) => r.status === "recibido").length}</p><p className="text-xs font-bold text-[#79918a]">Nuevos por revisar</p></div><div className="rounded-2xl bg-white p-4"><p className="text-[25px] font-bold tracking-[-0.04em] text-[#29584e]">24 h</p><p className="text-xs font-bold text-[#79918a]">Tiempo objetivo de respuesta</p></div></div></aside></div>;
 }
 
-function FinanceView({ data, onAddExpense, onAddFund }: { data: DashboardData; onAddExpense: () => void; onAddFund: () => void }) {
+function FinanceView({ data, role, onAddExpense, onAddFund }: { data: DashboardData; role: Role; onAddExpense: () => void; onAddFund: () => void }) {
+  const isAdmin = role === "Administrador";
   const maxExpense = Math.max(...data.expenses.map((expense) => expense.amount), 1);
   const byCategory = data.expenses.reduce<Record<string, number>>((total, expense) => ({ ...total, [expense.category]: (total[expense.category] || 0) + expense.amount }), {});
-  return <div className="space-y-5"><section className="overflow-hidden rounded-[28px] bg-[#194c43] text-white shadow-[0_14px_34px_rgba(24,73,65,0.18)]"><div className="grid gap-8 p-6 sm:p-8 lg:grid-cols-2"><div><p className="text-xs font-bold uppercase tracking-[0.16em] text-[#b8d6ce]">Saldo del fondo común</p><p className="mt-3 text-[38px] font-bold tracking-[-0.055em] sm:text-[46px]">{formatMoney(data.fund?.currentBalance ?? 0)}</p><p className="mt-2 max-w-sm text-sm leading-6 text-[#bdd4ce]">Fondo disponible para servicios, mantenimiento y mejoras de las áreas comunes.</p><div className="mt-6 flex flex-wrap gap-3"><button onClick={onAddFund} className="flex items-center gap-2 rounded-xl bg-[#f4dc89] px-4 py-2.5 text-sm font-bold text-[#244a42] transition hover:bg-[#ffe99b]"><Plus size={17} /> Ajustar fondo</button><button onClick={onAddExpense} className="flex items-center gap-2 rounded-xl border border-white/20 px-4 py-2.5 text-sm font-bold text-white transition hover:bg-white/10"><ReceiptText size={17} /> Registrar gasto</button></div></div><div className="grid grid-cols-2 gap-3 self-end"><div className="rounded-2xl bg-white/[0.09] p-4"><ArrowDownRight className="text-[#f0d873]" size={19} /><p className="mt-5 text-xl font-bold">{formatMoney(data.summary.totalPaid)}</p><p className="mt-1 text-xs text-[#bed6cf]">Cobrado este mes</p></div><div className="rounded-2xl bg-white/[0.09] p-4"><ArrowUpRight className="text-[#e9a486]" size={19} /><p className="mt-5 text-xl font-bold">{formatMoney(data.summary.totalExpenses)}</p><p className="mt-1 text-xs text-[#bed6cf]">Gastos registrados</p></div></div></div></section><div className="grid gap-5 xl:grid-cols-5"><section className="rounded-[26px] border border-[#e1ebe6] bg-white p-5 shadow-[0_8px_30px_rgba(23,63,53,0.035)] sm:p-6 xl:col-span-3"><div className="flex items-center justify-between"><div><h2 className="text-lg font-bold text-[#294e46]">Gastos del mes</h2><p className="mt-1 text-sm text-[#7b9089]">Servicios, proveedores y compras del PH.</p></div><button onClick={onAddExpense} className="text-xs font-bold text-[#42796c]">Agregar gasto <Plus className="inline" size={14} /></button></div><div className="mt-5 space-y-4">{data.expenses.map((expense) => <div key={expense.id}><div className="mb-1.5 flex items-center justify-between gap-4 text-xs"><span className="font-bold text-[#43665e]">{expense.description}</span><span className="font-bold text-[#264c44]">{formatMoney(expense.amount)}</span></div><div className="h-2 overflow-hidden rounded-full bg-[#edf2ef]"><div className="h-full rounded-full bg-[#7eae9f]" style={{ width: `${(expense.amount / maxExpense) * 100}%` }} /></div><p className="mt-1.5 text-[11px] text-[#8b9b96]">{expense.vendor} · {expense.category}</p></div>)}</div></section><section className="rounded-[26px] border border-[#e1ebe6] bg-white p-5 shadow-[0_8px_30px_rgba(23,63,53,0.035)] sm:p-6 xl:col-span-2"><h2 className="text-lg font-bold text-[#294e46]">Distribución</h2><p className="mt-1 text-sm text-[#7b9089]">Por categoría de gasto</p><div className="mt-6 space-y-4">{Object.entries(byCategory).map(([category, total], index) => { const colors = ["bg-[#4c8d7d]", "bg-[#e2b654]", "bg-[#df7e61]", "bg-[#789bbd]", "bg-[#9d8bb5]"]; return <div key={category} className="flex items-center gap-3"><span className={`size-2.5 rounded-full ${colors[index % colors.length]}`} /><span className="flex-1 text-sm font-semibold text-[#58726b]">{category}</span><span className="text-sm font-bold text-[#2b5048]">{formatMoney(total)}</span></div>; })}</div><div className="mt-6 rounded-2xl bg-[#eff6f2] p-4"><p className="text-xs font-bold text-[#53756d]">Presupuesto mensual</p><div className="mt-2 flex items-end justify-between"><p className="text-xl font-bold tracking-[-0.04em] text-[#245247]">{formatMoney(data.fund?.monthlyBudget ?? 0)}</p><p className="text-xs font-bold text-[#528271]">Disponible {formatMoney(Math.max(0, (data.fund?.monthlyBudget ?? 0) - data.summary.totalExpenses))}</p></div></div></section></div></div>;
+  return <div className="space-y-5"><section className="overflow-hidden rounded-[28px] bg-[#194c43] text-white shadow-[0_14px_34px_rgba(24,73,65,0.18)]"><div className="grid gap-8 p-6 sm:p-8 lg:grid-cols-2"><div><p className="text-xs font-bold uppercase tracking-[0.16em] text-[#b8d6ce]">Saldo del fondo común</p><p className="mt-3 text-[38px] font-bold tracking-[-0.055em] sm:text-[46px]">{formatMoney(data.fund?.currentBalance ?? 0)}</p><p className="mt-2 max-w-sm text-sm leading-6 text-[#bdd4ce]">Fondo disponible para servicios, mantenimiento y mejoras de las áreas comunes.</p>{isAdmin ? <div className="mt-6 flex flex-wrap gap-3"><button onClick={onAddFund} className="flex items-center gap-2 rounded-xl bg-[#f4dc89] px-4 py-2.5 text-sm font-bold text-[#244a42] transition hover:bg-[#ffe99b]"><Plus size={17} /> Ajustar fondo</button><button onClick={onAddExpense} className="flex items-center gap-2 rounded-xl border border-white/20 px-4 py-2.5 text-sm font-bold text-white transition hover:bg-white/10"><ReceiptText size={17} /> Registrar gasto</button></div> : <p className="mt-6 rounded-xl bg-white/10 p-3 text-xs leading-5 text-[#cfe0da]">Vista de consulta. Solo la administración puede registrar gastos o ajustar el fondo.</p>}</div><div className="grid grid-cols-2 gap-3 self-end"><div className="rounded-2xl bg-white/[0.09] p-4"><ArrowDownRight className="text-[#f0d873]" size={19} /><p className="mt-5 text-xl font-bold">{formatMoney(data.summary.totalPaid)}</p><p className="mt-1 text-xs text-[#bed6cf]">Cobrado este mes</p></div><div className="rounded-2xl bg-white/[0.09] p-4"><ArrowUpRight className="text-[#e9a486]" size={19} /><p className="mt-5 text-xl font-bold">{formatMoney(data.summary.totalExpenses)}</p><p className="mt-1 text-xs text-[#bed6cf]">Gastos registrados</p></div></div></div></section><div className="grid gap-5 xl:grid-cols-5"><section className="rounded-[26px] border border-[#e1ebe6] bg-white p-5 shadow-[0_8px_30px_rgba(23,63,53,0.035)] sm:p-6 xl:col-span-3"><div className="flex items-center justify-between"><div><h2 className="text-lg font-bold text-[#294e46]">Gastos del mes</h2><p className="mt-1 text-sm text-[#7b9089]">Servicios, proveedores y compras del PH.</p></div>{isAdmin && <button onClick={onAddExpense} className="text-xs font-bold text-[#42796c]">Agregar gasto <Plus className="inline" size={14} /></button>}</div><div className="mt-5 space-y-4">{data.expenses.map((expense) => <div key={expense.id}><div className="mb-1.5 flex items-center justify-between gap-4 text-xs"><span className="font-bold text-[#43665e]">{expense.description}</span><span className="font-bold text-[#264c44]">{formatMoney(expense.amount)}</span></div><div className="h-2 overflow-hidden rounded-full bg-[#edf2ef]"><div className="h-full rounded-full bg-[#7eae9f]" style={{ width: `${(expense.amount / maxExpense) * 100}%` }} /></div><p className="mt-1.5 text-[11px] text-[#8b9b96]">{expense.vendor} · {expense.category}</p></div>)}</div></section><section className="rounded-[26px] border border-[#e1ebe6] bg-white p-5 shadow-[0_8px_30px_rgba(23,63,53,0.035)] sm:p-6 xl:col-span-2"><h2 className="text-lg font-bold text-[#294e46]">Distribución</h2><p className="mt-1 text-sm text-[#7b9089]">Por categoría de gasto</p><div className="mt-6 space-y-4">{Object.entries(byCategory).map(([category, total], index) => { const colors = ["bg-[#4c8d7d]", "bg-[#e2b654]", "bg-[#df7e61]", "bg-[#789bbd]", "bg-[#9d8bb5]"]; return <div key={category} className="flex items-center gap-3"><span className={`size-2.5 rounded-full ${colors[index % colors.length]}`} /><span className="flex-1 text-sm font-semibold text-[#58726b]">{category}</span><span className="text-sm font-bold text-[#2b5048]">{formatMoney(total)}</span></div>; })}</div><div className="mt-6 rounded-2xl bg-[#eff6f2] p-4"><p className="text-xs font-bold text-[#53756d]">Presupuesto mensual</p><div className="mt-2 flex items-end justify-between"><p className="text-xl font-bold tracking-[-0.04em] text-[#245247]">{formatMoney(data.fund?.monthlyBudget ?? 0)}</p><p className="text-xs font-bold text-[#528271]">Disponible {formatMoney(Math.max(0, (data.fund?.monthlyBudget ?? 0) - data.summary.totalExpenses))}</p></div></div></section></div></div>;
 }
 
 function AccountsView({ accounts, allAccounts, query, onQuery, fee, role, currentEmail, onAddUser }: { accounts: Account[]; allAccounts: Account[]; query: string; onQuery: (value: string) => void; fee: number; role: Role; currentEmail: string; onAddUser: () => void }) {
@@ -643,6 +685,180 @@ function AccountsView({ accounts, allAccounts, query, onQuery, fee, role, curren
   const overdue = allAccounts.filter((account) => account.status === "vencido").length;
   const ownAccount = allAccounts.find((account) => account.email.toLowerCase() === currentEmail.toLowerCase()) || allAccounts[0];
   return <div className="space-y-5">{role === "Propietario" && ownAccount && <section className="rounded-[26px] bg-[#edf6f1] p-5 sm:p-6"><div className="flex flex-col justify-between gap-4 sm:flex-row sm:items-center"><div><p className="text-xs font-bold uppercase tracking-[0.14em] text-[#578074]">Mi estado de cuenta · {ownAccount.unit}</p><p className="mt-2 text-[30px] font-bold tracking-[-0.05em] text-[#214b42]">{ownAccount.status === "pagado" ? "¡Estás al día!" : formatMoney(ownAccount.dueAmount - ownAccount.paidAmount)}</p><p className="mt-1 text-sm text-[#638078]">Cuota de administración: {formatMoney(fee)} al mes.</p></div><StatusPill value={ownAccount.status} /></div></section>}<div className="grid gap-4 sm:grid-cols-3"><MetricCard label="Propietarios al día" value={`${paid}/${allAccounts.length}`} detail="Cuotas de febrero" icon={Check} tone="green" /><MetricCard label="Saldos por cobrar" value={formatMoney(allAccounts.reduce((total, account) => total + Math.max(0, account.dueAmount - account.paidAmount), 0))} detail={`${overdue} cuentas vencidas`} icon={BadgeDollarSign} tone="coral" /><MetricCard label="Cuota mensual" value={formatMoney(fee)} detail="Por apartamento" icon={ReceiptText} tone="gold" /></div><section className="overflow-hidden rounded-[26px] border border-[#e1ebe6] bg-white shadow-[0_8px_30px_rgba(23,63,53,0.035)]"><div className="flex flex-col gap-3 border-b border-[#ebf0ed] p-5 sm:flex-row sm:items-center sm:justify-between sm:p-6"><div><h2 className="text-lg font-bold text-[#284e45]">{role === "Administrador" ? "Cuentas de propietarios" : "Movimientos de la comunidad"}</h2><p className="mt-1 text-sm text-[#7a8e88]">Corte al 10 de febrero de 2025.</p></div><div className="flex flex-col gap-2 sm:flex-row sm:items-center">{role === "Administrador" && <><button onClick={onAddUser} className="flex items-center justify-center gap-2 rounded-xl bg-[#204f46] px-4 py-2.5 text-xs font-bold text-white transition hover:bg-[#163f38]"><Plus size={15} /> Crear acceso</button><label className="flex h-10 items-center gap-2 rounded-xl border border-[#dce7e2] px-3 text-[#7c928b]"><Search size={16} /><input value={query} onChange={(event) => onQuery(event.target.value)} placeholder="Buscar propietario" className="w-40 bg-transparent text-sm text-[#31544d] outline-none placeholder:text-[#9aaba6]" /></label></>}</div></div><div className="overflow-x-auto"><table className="min-w-[720px] w-full text-left"><thead className="bg-[#f8faf8] text-[10px] uppercase tracking-[0.1em] text-[#82958f]"><tr><th className="px-6 py-3 font-bold">Propietario / unidad</th><th className="px-4 py-3 font-bold">Período</th><th className="px-4 py-3 font-bold">Cuota</th><th className="px-4 py-3 font-bold">Pagado</th><th className="px-4 py-3 font-bold">Estado</th><th className="px-6 py-3" /></tr></thead><tbody className="divide-y divide-[#edf1ee]">{accounts.map((account) => <tr key={account.id} className="text-sm"><td className="px-6 py-4"><p className="font-bold text-[#31544d]">{account.residentName}</p><p className="mt-0.5 text-xs text-[#859892]">{account.unit}</p></td><td className="px-4 py-4 text-[#70857e]">{account.period}</td><td className="px-4 py-4 font-semibold text-[#46645d]">{formatMoney(account.dueAmount)}</td><td className="px-4 py-4 font-semibold text-[#46645d]">{formatMoney(account.paidAmount)}</td><td className="px-4 py-4"><StatusPill value={account.status} compact /></td><td className="px-6 py-4"><button className="grid size-8 place-items-center rounded-lg text-[#76908a] hover:bg-[#eff5f1]"><MoreHorizontal size={18} /></button></td></tr>)}</tbody></table></div>{accounts.length === 0 && <div className="p-6"><EmptyState title="No encontramos coincidencias" detail="Prueba con otro nombre, unidad o estado." icon={Search} /></div>}</section></div>;
+}
+
+function UsersView({ initialUsers, currentEmail, onAddUser, onChanged, notify }: { initialUsers: ManagedUser[]; currentEmail: string; onAddUser: () => void; onChanged: () => Promise<void>; notify: (message: string) => void }) {
+  const [users, setUsers] = useState<ManagedUser[]>(initialUsers);
+  const [search, setSearch] = useState("");
+  const [editingId, setEditingId] = useState<number | null>(null);
+  const [editName, setEditName] = useState("");
+  const [editUnit, setEditUnit] = useState("");
+  const [editPhone, setEditPhone] = useState("");
+  const [editRole, setEditRole] = useState("propietario");
+  const [newPassword, setNewPassword] = useState("");
+  const [busyId, setBusyId] = useState<number | null>(null);
+  const [isRefreshing, setIsRefreshing] = useState(false);
+
+  useEffect(() => {
+    setUsers(initialUsers);
+  }, [initialUsers]);
+
+  const refresh = async () => {
+    setIsRefreshing(true);
+    try {
+      const response = await fetch("/api/users", { cache: "no-store" });
+      const result = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(result.error || "No se pudieron cargar los usuarios.");
+      setUsers(result.users ?? []);
+      await onChanged();
+    } catch (error) {
+      notify(error instanceof Error ? error.message : "No se pudieron cargar los usuarios.");
+    } finally {
+      setIsRefreshing(false);
+    }
+  };
+
+  const filtered = users.filter((item) => {
+    const q = search.toLowerCase().trim();
+    if (!q) return true;
+    return [item.fullName, item.email, item.unit, item.role].some((v) => (v ?? "").toLowerCase().includes(q));
+  });
+
+  const admins = users.filter((item) => item.role === "administrador").length;
+  const owners = users.length - admins;
+
+  const startEdit = (item: ManagedUser) => {
+    setEditingId(item.id);
+    setEditName(item.fullName);
+    setEditUnit(item.unit);
+    setEditPhone(item.phone ?? "");
+    setEditRole(item.role === "administrador" ? "administrador" : "propietario");
+    setNewPassword("");
+  };
+
+  const saveEdit = async (id: number) => {
+    if (!editName.trim() || !editUnit.trim()) {
+      notify("Nombre y unidad son obligatorios.");
+      return;
+    }
+    if (newPassword && newPassword.length < 6) {
+      notify("La nueva contraseña debe tener al menos 6 caracteres.");
+      return;
+    }
+    setBusyId(id);
+    try {
+      const response = await fetch("/api/users", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          id,
+          fullName: editName.trim(),
+          unit: editUnit.trim(),
+          phone: editPhone.trim(),
+          role: editRole,
+          ...(newPassword ? { password: newPassword } : {}),
+        }),
+      });
+      const result = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(result.error || "No se pudo actualizar el usuario.");
+      setEditingId(null);
+      setNewPassword("");
+      notify(newPassword ? "Usuario actualizado y contraseña restablecida." : "Usuario actualizado correctamente.");
+      await refresh();
+    } catch (error) {
+      notify(error instanceof Error ? error.message : "No se pudo actualizar el usuario.");
+    } finally {
+      setBusyId(null);
+    }
+  };
+
+  const removeUser = async (id: number, name: string) => {
+    if (!window.confirm(`¿Eliminar el acceso de ${name}? Esta acción no se puede deshacer.`)) return;
+    setBusyId(id);
+    try {
+      const response = await fetch("/api/users", {
+        method: "DELETE",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ id }),
+      });
+      const result = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(result.error || "No se pudo eliminar el usuario.");
+      notify("Acceso eliminado correctamente.");
+      await refresh();
+    } catch (error) {
+      notify(error instanceof Error ? error.message : "No se pudo eliminar el usuario.");
+    } finally {
+      setBusyId(null);
+    }
+  };
+
+  return (
+    <div className="space-y-5">
+      <div className="grid gap-4 sm:grid-cols-3">
+        <MetricCard label="Usuarios totales" value={String(users.length)} detail={`${admins} admin · ${owners} residentes`} icon={UsersRound} tone="green" />
+        <MetricCard label="Administradores" value={String(admins)} detail="Acceso total al portal" icon={ShieldCheck} tone="gold" />
+        <MetricCard label="Residentes" value={String(owners)} detail="Consulta + reportes de daños" icon={UserRound} tone="blue" />
+      </div>
+      <section className="overflow-hidden rounded-[26px] border border-[#e1ebe6] bg-white shadow-[0_8px_30px_rgba(23,63,53,0.035)]">
+        <div className="flex flex-col gap-3 border-b border-[#ebf0ed] p-5 sm:flex-row sm:items-center sm:justify-between sm:p-6">
+          <div>
+            <h2 className="text-lg font-bold text-[#284e45]">Gestión de accesos</h2>
+            <p className="mt-1 text-sm text-[#7a8e88]">Edita datos, cambia el rol y restablece contraseñas.</p>
+          </div>
+          <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+            <label className="flex h-10 items-center gap-2 rounded-xl border border-[#dce7e2] px-3 text-[#7c928b]">
+              <Search size={16} />
+              <input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Buscar usuario" className="w-40 bg-transparent text-sm text-[#31544d] outline-none placeholder:text-[#9aaba6]" />
+            </label>
+            <button onClick={refresh} disabled={isRefreshing} className="rounded-xl border border-[#dce7e2] px-4 py-2.5 text-xs font-bold text-[#47766c] transition hover:bg-[#f2f7f4] disabled:opacity-60">{isRefreshing ? "Actualizando…" : "Actualizar"}</button>
+            <button onClick={onAddUser} className="flex items-center justify-center gap-2 rounded-xl bg-[#204f46] px-4 py-2.5 text-xs font-bold text-white transition hover:bg-[#163f38]"><Plus size={15} /> Crear acceso</button>
+          </div>
+        </div>
+        <div className="divide-y divide-[#edf1ee]">
+          {filtered.map((item) => {
+            const isSelf = item.email.toLowerCase() === currentEmail.toLowerCase();
+            const isEditing = editingId === item.id;
+            return (
+              <div key={item.id} className="p-5 sm:p-6">
+                <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                  <div className="min-w-0">
+                    <p className="truncate font-bold text-[#31544d]">{item.fullName} {isSelf && <span className="ml-2 rounded-full bg-[#e8f1ed] px-2 py-0.5 text-[10px] font-bold text-[#3d7466]">TÚ</span>}</p>
+                    <p className="mt-0.5 truncate text-xs text-[#859892]">{item.email} · {item.unit}</p>
+                  </div>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <StatusPill value={item.role === "administrador" ? "administrador" : "propietario"} compact />
+                    {isEditing ? (
+                      <>
+                        <button disabled={busyId === item.id} onClick={() => saveEdit(item.id)} className="rounded-xl bg-[#21564c] px-3.5 py-2 text-xs font-bold text-white hover:bg-[#183f38] disabled:opacity-60">{busyId === item.id ? "Guardando…" : "Guardar"}</button>
+                        <button onClick={() => { setEditingId(null); setNewPassword(""); }} className="rounded-xl border border-[#dce7e2] px-3.5 py-2 text-xs font-bold text-[#58736c] hover:bg-[#f6f9f7]">Cancelar</button>
+                      </>
+                    ) : (
+                      <>
+                        <button onClick={() => startEdit(item)} className="rounded-xl border border-[#dce7e2] px-3.5 py-2 text-xs font-bold text-[#47766c] hover:bg-[#f2f7f4]">Editar / contraseña</button>
+                        {!isSelf && (
+                          <button disabled={busyId === item.id} onClick={() => removeUser(item.id, item.fullName)} className="rounded-xl border border-[#f2c9bd] px-3.5 py-2 text-xs font-bold text-[#b1543a] hover:bg-[#fff3ef] disabled:opacity-60">Eliminar</button>
+                        )}
+                      </>
+                    )}
+                  </div>
+                </div>
+                {isEditing && (
+                  <div className="mt-4 grid gap-3 rounded-2xl bg-[#f7faf8] p-4 sm:grid-cols-2">
+                    <label className="block"><span className="mb-1.5 block text-xs font-bold text-[#45655e]">Nombre</span><input value={editName} onChange={(event) => setEditName(event.target.value)} className="h-10 w-full rounded-xl border border-[#d9e5df] bg-white px-3 text-sm text-[#2d5149] outline-none focus:border-[#629588]" /></label>
+                    <label className="block"><span className="mb-1.5 block text-xs font-bold text-[#45655e]">Unidad</span><input value={editUnit} onChange={(event) => setEditUnit(event.target.value)} className="h-10 w-full rounded-xl border border-[#d9e5df] bg-white px-3 text-sm text-[#2d5149] outline-none focus:border-[#629588]" /></label>
+                    <label className="block"><span className="mb-1.5 block text-xs font-bold text-[#45655e]">Teléfono</span><input value={editPhone} onChange={(event) => setEditPhone(event.target.value)} className="h-10 w-full rounded-xl border border-[#d9e5df] bg-white px-3 text-sm text-[#2d5149] outline-none focus:border-[#629588]" /></label>
+                    <label className="block"><span className="mb-1.5 block text-xs font-bold text-[#45655e]">Rol</span><select value={editRole} onChange={(event) => setEditRole(event.target.value)} className="h-10 w-full rounded-xl border border-[#d9e5df] bg-white px-3 text-sm text-[#2d5149] outline-none focus:border-[#629588]"><option value="propietario">Propietario · consulta + reportes</option><option value="administrador">Administrador · acceso total</option></select></label>
+                    <label className="block sm:col-span-2"><span className="mb-1.5 block text-xs font-bold text-[#45655e]">Nueva contraseña (opcional)</span><input value={newPassword} onChange={(event) => setNewPassword(event.target.value)} type="text" placeholder="Déjalo vacío para no cambiarla · mínimo 6 caracteres" className="h-10 w-full rounded-xl border border-[#d9e5df] bg-white px-3 text-sm text-[#2d5149] outline-none placeholder:text-[#a1b0ab] focus:border-[#629588]" /></label>
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </div>
+        {filtered.length === 0 && <div className="p-6"><EmptyState title="Sin resultados" detail="Prueba con otro nombre, correo o unidad." icon={Search} /></div>}
+      </section>
+    </div>
+  );
 }
 
 function Modal({ kind, onClose, onSubmit, isSaving }: { kind: ModalKind; onClose: () => void; onSubmit: (event: FormEvent<HTMLFormElement>) => void; isSaving: boolean }) {
@@ -666,6 +882,6 @@ function SelectField({ label, name, children, defaultValue }: { label: string; n
 
 function TaskForm() { return <><Field label="Nombre de la tarea" name="title" placeholder="Ej. Cambio de luminarias" /><div className="grid grid-cols-2 gap-3"><SelectField label="Categoría" name="category"><option>Limpieza edificio</option><option>Áreas verdes</option><option>Iluminación</option><option>Reparación estructural</option></SelectField><SelectField label="Prioridad" name="priority"><option value="media">Media</option><option value="alta">Alta</option><option value="baja">Baja</option></SelectField></div><Field label="Ubicación" name="location" placeholder="Ej. Torre B · Piso 3" /><Field label="Fecha programada" name="scheduledFor" type="date" required={false} /><label className="block"><span className="mb-1.5 block text-xs font-bold text-[#45655e]">Notas (opcional)</span><textarea name="description" rows={3} placeholder="Indica lo que debe realizar el proveedor..." className="w-full resize-none rounded-xl border border-[#d9e5df] bg-[#fbfcfb] p-3.5 text-sm font-medium text-[#2d5149] outline-none placeholder:text-[#a1b0ab] focus:border-[#629588]" /></label></>; }
 function ReportForm() { return <><Field label="Título del reporte" name="title" placeholder="Ej. Fuga en pasillo" /><div className="grid grid-cols-2 gap-3"><SelectField label="Tipo" name="category"><option>Daño</option><option>Convivencia</option><option>Seguridad</option><option>Sugerencia</option></SelectField><SelectField label="Prioridad" name="priority"><option value="media">Media</option><option value="alta">Alta</option><option value="baja">Baja</option></SelectField></div><Field label="Ubicación" name="location" placeholder="Ej. Torre C · Nivel 2" /><label className="block"><span className="mb-1.5 block text-xs font-bold text-[#45655e]">¿Qué ocurrió?</span><textarea name="description" required rows={4} placeholder="Describe el problema con el mayor detalle posible..." className="w-full resize-none rounded-xl border border-[#d9e5df] bg-[#fbfcfb] p-3.5 text-sm font-medium text-[#2d5149] outline-none placeholder:text-[#a1b0ab] focus:border-[#629588]" /></label></>; }
-function ExpenseForm() { return <><Field label="Descripción del gasto" name="description" placeholder="Ej. Compra de hilo de máquina" /><div className="grid grid-cols-2 gap-3"><SelectField label="Categoría" name="category"><option>Servicios</option><option>Limpieza</option><option>Áreas verdes</option><option>Repuestos</option><option>Varios</option></SelectField><Field label="Monto (B/.)" name="amount" type="number" placeholder="5.45" step="0.01" min="0.01" inputMode="decimal" /></div><p className="-mt-1 text-[11px] leading-4 text-[#8ba09a]">Acepta decimales con punto o coma, por ejemplo 5.45.</p><Field label="Proveedor" name="vendor" placeholder="Ej. Novey" /><Field label="Fecha de pago" name="expenseDate" type="date" defaultValue={new Date().toISOString().slice(0, 10)} /></>; }
-function FundForm() { return <><Field label="Monto del movimiento (B/.)" name="amount" type="number" placeholder="Ej. 25.50 o -10.25" step="0.01" inputMode="decimal" /><div className="rounded-xl bg-[#f0f6f2] p-3 text-xs leading-5 text-[#5e7b73]"><strong>Nota:</strong> usa un valor positivo para sumar al fondo y un valor negativo para descontar un ajuste. Acepta decimales, por ejemplo 25.50.</div></>; }
+function ExpenseForm() { return <><Field label="Descripción del gasto" name="description" placeholder="Ej. Compra de hilo de máquina" /><div className="grid grid-cols-2 gap-3"><SelectField label="Categoría" name="category"><option>Servicios</option><option>Limpieza</option><option>Áreas verdes</option><option>Repuestos</option><option>Varios</option></SelectField><Field label="Monto (B/.)" name="amount" type="text" placeholder="5.45" inputMode="decimal" /></div><p className="-mt-1 text-[11px] leading-4 text-[#8ba09a]">Acepta decimales con punto o coma, por ejemplo 5.45 o 5,45.</p><Field label="Proveedor" name="vendor" placeholder="Ej. Novey" /><Field label="Fecha de pago" name="expenseDate" type="date" defaultValue={new Date().toISOString().slice(0, 10)} /></>; }
+function FundForm() { return <><Field label="Monto del movimiento (B/.)" name="amount" type="text" placeholder="Ej. 25.50 o -10.25" inputMode="decimal" /><div className="rounded-xl bg-[#f0f6f2] p-3 text-xs leading-5 text-[#5e7b73]"><strong>Nota:</strong> usa un valor positivo para sumar al fondo y un valor negativo para descontar un ajuste. Acepta decimales con punto o coma, por ejemplo 25.50.</div></>; }
 function UserForm() { return <><Field label="Nombre completo" name="fullName" placeholder="Ej. María González" /><div className="grid grid-cols-2 gap-3"><Field label="Unidad" name="unit" placeholder="Ej. Torre A · 5C" /><SelectField label="Rol" name="role"><option value="propietario">Propietario</option><option value="administrador">Administrador</option></SelectField></div><Field label="Correo electrónico" name="email" type="email" placeholder="usuario@email.com" /><div className="grid grid-cols-2 gap-3"><Field label="Teléfono (opcional)" name="phone" required={false} placeholder="+507 6000-0000" /><Field label="Contraseña temporal" name="password" type="text" placeholder="Mínimo 6 caracteres" /></div><div className="rounded-xl bg-[#f0f6f2] p-3 text-xs leading-5 text-[#5e7b73]">Comparte ese correo y contraseña con la persona. Podrá cambiarla luego con la administración.</div></>; }
