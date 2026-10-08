@@ -364,6 +364,21 @@ export async function createMaintenanceTask(input: {
       invoiceData,
     })
     .returning();
+  // El costo de la tarea es un gasto del PH: se registra como gasto visible
+  // en Finanzas y se resta automáticamente del fondo común.
+  if (cost > 0) {
+    try {
+      await createExpense({
+        category: input.category,
+        description: `Tarea: ${input.title} · ${input.location}`.slice(0, 180),
+        vendor: "Operación PH",
+        amount: cost,
+        expenseDate: input.scheduledFor || new Date().toISOString().slice(0, 10),
+      });
+    } catch (error) {
+      console.error("Task created but its expense/fund move failed", error);
+    }
+  }
   return task;
 }
 
