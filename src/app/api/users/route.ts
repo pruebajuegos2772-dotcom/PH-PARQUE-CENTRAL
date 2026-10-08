@@ -2,12 +2,14 @@ import { db } from "@/db";
 import { ownerAccounts } from "@/db/schema";
 import {
   createResidentWithPassword,
+  currentMonthPeriod,
   deleteResidentByAdmin,
+  dueDateForPeriod,
   findResidentByEmail,
   listResidentsForAdmin,
   updateResidentByAdmin,
 } from "@/lib/ph-data";
-import { getSessionFromRequest } from "@/lib/auth";
+import { getSessionFromRequest, parseAmount } from "@/lib/auth";
 
 export const dynamic = "force-dynamic";
 
@@ -53,6 +55,9 @@ export async function POST(request: Request) {
     const exists = await findResidentByEmail(email);
     if (exists) return Response.json({ error: "Ya existe un usuario con ese correo." }, { status: 409 });
 
+    const monthlyFeeRaw = body.monthlyFee ?? body.cuota ?? "40.80";
+    const monthlyFee = parseAmount(monthlyFeeRaw);
+    const feeValue = Number.isFinite(monthlyFee) && monthlyFee >= 0 ? Math.round(monthlyFee * 100) / 100 : 40.8;
     const resident = await createResidentWithPassword({
       fullName,
       email,
@@ -60,16 +65,19 @@ export async function POST(request: Request) {
       role,
       phone: String(body.phone ?? ""),
       password,
+      monthlyFee: feeValue,
     });
 
     if (role !== "administrador") {
+      const period = currentMonthPeriod();
       await db.insert(ownerAccounts).values({
         residentId: resident.id,
-        period: "Febrero 2025",
-        dueDate: "2025-02-10",
-        dueAmount: "40.80",
+        period,
+        dueDate: dueDateForPeriod(period),
+        dueAmount: String(feeValue.toFixed(2)),
         paidAmount: "0",
         status: "pendiente",
+        notes: "Cuota inicial",
       });
     }
 
@@ -92,12 +100,14 @@ export async function PATCH(request: Request) {
     if (!Number.isFinite(id) || id <= 0) {
       return Response.json({ error: "Usuario inválido." }, { status: 400 });
     }
+    const monthlyFee = body.monthlyFee !== undefined && body.monthlyFee !== "" ? parseAmount(body.monthlyFee) : undefined;
     const updated = await updateResidentByAdmin(id, {
       fullName: body.fullName,
       unit: body.unit,
       phone: body.phone,
       role: body.role,
       password: body.password ? String(body.password) : undefined,
+      monthlyFee: monthlyFee !== undefined && Number.isFinite(monthlyFee) ? monthlyFee : undefined,
     });
     return Response.json(updated);
   } catch (error) {

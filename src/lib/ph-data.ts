@@ -1,8 +1,9 @@
-import { asc, desc, eq, sql } from "drizzle-orm";
+import { and, asc, desc, eq, sql } from "drizzle-orm";
 import { db } from "@/db";
 import {
   expenses,
   maintenanceTasks,
+  monthlyClosings,
   ownerAccounts,
   phFunds,
   reportComments,
@@ -58,6 +59,12 @@ export async function findResidentByEmail(email: string) {
   return rows.find((row) => row.email.trim().toLowerCase() === normalized) ?? null;
 }
 
+function toMonthlyFee(value: unknown, fallback = 40.8): number {
+  const n = typeof value === "number" ? value : Number(String(value ?? "").trim().replace(/\s/g, "").replace(",", "."));
+  if (!Number.isFinite(n) || n < 0) return fallback;
+  return Math.round(n * 100) / 100;
+}
+
 export async function createResidentWithPassword(input: {
   fullName: string;
   email: string;
@@ -65,6 +72,7 @@ export async function createResidentWithPassword(input: {
   role?: string;
   phone?: string;
   password: string;
+  monthlyFee?: number;
 }) {
   const [row] = await db
     .insert(residents)
@@ -76,6 +84,7 @@ export async function createResidentWithPassword(input: {
       phone: input.phone || null,
       accountStatus: "al_dia",
       outstandingBalance: "0",
+      monthlyFee: String(toMonthlyFee(input.monthlyFee, 40.8)),
       passwordHash: hashPassword(input.password),
     })
     .returning();
@@ -162,8 +171,66 @@ export async function ensureDemoData() {
   });
 }
 
+export function currentMonthPeriod(d = new Date()) {
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, "0");
+  return `${y}-${m}`;
+}
+
+export function dueDateForPeriod(period: string) {
+  // Corte día 10 de cada mes, como en el PH.
+  return `${period}-10`;
+}
+
+/**
+ * Cada 1ro de mes se genera la cuota mensual por propietario.
+ * - Cuota = monthlyFee del residente (permite cuotas diferentes) o la global del fondo (40.80).
+ * - La cuota NO mueve el fondo; solo lo pagado lo aumenta.
+ * - Se crea una sola vez por período y residente (tabla monthly_closings + chequeo por período).
+ */
+export async function ensureMonthlyCharges() {
+  const fund = await ensureFundExists();
+  const defaultFee = asNumber((fund as { monthlyFee?: string | number | null }).monthlyFee ?? 40.8) || 40.8;
+  const period = currentMonthPeriod();
+  const already = await db.select().from(monthlyClosings).where(eq(monthlyClosings.period, period)).limit(1);
+  const allResidents = await db.select().from(residents);
+  const owners = allResidents.filter((r) => r.role === "propietario");
+
+  // Si ya se cerró el mes, no hacer nada.
+  if (already[0]) return { period, created: 0, skipped: true };
+
+  let created = 0;
+  for (const owner of owners) {
+    const fee = asNumber((owner as { monthlyFee?: string | number | null }).monthlyFee ?? defaultFee) || defaultFee;
+    const exists = await db
+      .select({ id: ownerAccounts.id })
+      .from(ownerAccounts)
+      .where(and(eq(ownerAccounts.residentId, owner.id), eq(ownerAccounts.period, period)))
+      .limit(1);
+    if (exists[0]) continue;
+    await db.insert(ownerAccounts).values({
+      residentId: owner.id,
+      period,
+      dueDate: dueDateForPeriod(period),
+      dueAmount: String(Math.round(fee * 100) / 100),
+      paidAmount: "0",
+      status: "pendiente",
+      notes: "Cuota mensual automática",
+    });
+    created += 1;
+  }
+
+  await db.insert(monthlyClosings).values({ period }).onConflictDoNothing();
+  return { period, created, skipped: false };
+}
+
 export async function getDashboardData() {
   await ensureDemoData();
+  try {
+    await ensureMonthlyCharges();
+  } catch (error) {
+    console.error("Unable to ensure monthly charges", error);
+  }
 
   const [fund, taskRows, reportRows, commentRows, expenseRows, accountRows, residentRows] = await Promise.all([
     db.select().from(phFunds).limit(1),
@@ -204,7 +271,14 @@ export async function getDashboardData() {
     fund: fund[0]
       ? { ...fund[0], currentBalance: asNumber(fund[0].currentBalance), monthlyFee: asNumber(fund[0].monthlyFee), monthlyBudget: asNumber(fund[0].monthlyBudget) }
       : null,
-    tasks: taskRows.map((task) => ({ ...task, estimatedCost: asNumber(task.estimatedCost) })),
+    tasks: taskRows.map((task) => ({
+      ...task,
+      estimatedCost: asNumber(task.estimatedCost),
+      actualCost: asNumber((task as { actualCost?: string | number | null }).actualCost ?? 0),
+      invoiceName: (task as { invoiceName?: string | null }).invoiceName ?? null,
+      invoiceMime: (task as { invoiceMime?: string | null }).invoiceMime ?? null,
+      invoiceData: (task as { invoiceData?: string | null }).invoiceData ?? null,
+    })),
     reports: reportRows.map((report) => {
       const status = normalizeReportStatus(report.status);
       const comments = commentRows
@@ -235,6 +309,7 @@ export async function getDashboardData() {
       phone: resident.phone,
       accountStatus: resident.accountStatus,
       outstandingBalance: asNumber(resident.outstandingBalance),
+      monthlyFee: asNumber((resident as { monthlyFee?: string | number | null }).monthlyFee ?? 40.8),
     })),
     summary: {
       totalExpenses,
@@ -255,7 +330,23 @@ export async function createMaintenanceTask(input: {
   priority?: string;
   description?: string;
   scheduledFor?: string;
+  cost?: number;
+  invoiceName?: string;
+  invoiceMime?: string;
+  invoiceData?: string;
 }) {
+  const cost = Number.isFinite(Number(input.cost)) ? Math.round(Number(input.cost) * 100) / 100 : 0;
+  let invoiceName: string | null = input.invoiceName?.trim().slice(0, 180) || null;
+  let invoiceMime: string | null = input.invoiceMime?.trim().slice(0, 80) || null;
+  let invoiceData: string | null = input.invoiceData || null;
+  if (invoiceData && invoiceData.length > 4_500_000) {
+    throw new Error("La factura es muy pesada (máximo ~3MB). Usa un PDF o foto más liviana.");
+  }
+  if (invoiceData && !invoiceName) invoiceName = "factura";
+  if (!invoiceData) {
+    invoiceName = null;
+    invoiceMime = null;
+  }
   const [task] = await db
     .insert(maintenanceTasks)
     .values({
@@ -266,6 +357,11 @@ export async function createMaintenanceTask(input: {
       description: input.description || null,
       scheduledFor: input.scheduledFor || null,
       status: "programada",
+      estimatedCost: String(cost),
+      actualCost: String(cost),
+      invoiceName,
+      invoiceMime,
+      invoiceData,
     })
     .returning();
   return task;
@@ -425,17 +521,21 @@ export async function listResidentsForAdmin() {
     phone: row.phone,
     accountStatus: row.accountStatus,
     outstandingBalance: asNumber(row.outstandingBalance),
+    monthlyFee: asNumber((row as { monthlyFee?: string | number | null }).monthlyFee ?? 40.8),
     createdAt: row.createdAt,
   }));
 }
 
 export async function updateResidentByAdmin(
   id: number,
-  input: { fullName?: string; unit?: string; phone?: string; role?: string; password?: string },
+  input: { fullName?: string; unit?: string; phone?: string; role?: string; password?: string; monthlyFee?: number },
 ) {
   const patch: Partial<typeof residents.$inferInsert> = {};
   if (input.fullName?.trim()) patch.fullName = input.fullName.trim();
   if (input.unit?.trim()) patch.unit = input.unit.trim();
+  if (input.monthlyFee !== undefined) {
+    patch.monthlyFee = String(toMonthlyFee(input.monthlyFee, 40.8));
+  }
   if (typeof input.phone === "string") patch.phone = input.phone.trim() || null;
   if (input.role === "administrador" || input.role === "propietario") patch.role = input.role;
   if (input.password) {

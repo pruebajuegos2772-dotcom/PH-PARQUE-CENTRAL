@@ -1,6 +1,7 @@
 import {
   createAccountEntry,
   deleteAccountEntry,
+  ensureMonthlyCharges,
   listAccountsWithResidents,
   updateAccountEntry,
 } from "@/lib/ph-data";
@@ -21,6 +22,11 @@ export async function GET(request: Request) {
   const session = getSessionFromRequest(request);
   if (!session) return Response.json({ error: "Debes iniciar sesión." }, { status: 401 });
   try {
+    try {
+      await ensureMonthlyCharges();
+    } catch (error) {
+      console.error("Unable to ensure monthly charges", error);
+    }
     return Response.json({ accounts: await listAccountsWithResidents() });
   } catch (error) {
     console.error("Unable to list accounts", error);

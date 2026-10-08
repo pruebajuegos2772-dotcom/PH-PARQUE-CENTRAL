@@ -49,6 +49,7 @@ type ManagedUser = {
   phone: string | null;
   accountStatus: string;
   outstandingBalance: number;
+  monthlyFee: number;
 };
 type Role = "Administrador" | "Propietario";
 
@@ -71,6 +72,10 @@ type Task = {
   scheduledFor: string | null;
   assignedTo: string | null;
   estimatedCost: number;
+  actualCost: number;
+  invoiceName: string | null;
+  invoiceMime: string | null;
+  invoiceData: string | null;
 };
 
 type ReportComment = {
@@ -344,8 +349,9 @@ export default function HomePage() {
   const submitForm = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     if (!modal) return;
-    const form = new FormData(event.currentTarget);
-    const raw = Object.fromEntries(form.entries()) as Record<string, string>;
+    const formEl = event.currentTarget;
+    const form = new FormData(formEl);
+    const raw = Object.fromEntries(form.entries()) as Record<string, string | File>;
     const paths: Record<Exclude<ModalKind, null>, string> = {
       task: "/api/tasks",
       report: "/api/reports",
@@ -354,8 +360,39 @@ export default function HomePage() {
       user: "/api/users",
     };
     const toDecimalNumber = (value: string) => Number(value.trim().replace(/\s/g, "").replace(",", "."));
+    // Adjunto de factura en tareas: leer el archivo como dataURL (PDF o imagen, máx ~3MB).
+    let invoicePayload: { invoiceName?: string; invoiceMime?: string; invoiceData?: string } = {};
+    if (modal === "task") {
+      const fileInput = formEl.querySelector('input[name="invoiceFile"]') as HTMLInputElement | null;
+      const file = fileInput?.files?.[0];
+      if (file) {
+        if (file.size > 3_200_000) {
+          setMessage("La factura es muy pesada (máximo ~3MB). Usa un PDF o foto más liviana.");
+          return;
+        }
+        const dataUrl: string = await new Promise((resolve, reject) => {
+          const reader = new FileReader();
+          reader.onload = () => resolve(String(reader.result));
+          reader.onerror = () => reject(new Error("No se pudo leer la factura."));
+          reader.readAsDataURL(file);
+        });
+        invoicePayload = { invoiceName: file.name.slice(0, 180), invoiceMime: file.type.slice(0, 80) || "application/octet-stream", invoiceData: dataUrl };
+      }
+    }
+    const stringRaw: Record<string, string> = {};
+    for (const [k, v] of Object.entries(raw)) {
+      if (typeof v === "string") stringRaw[k] = v;
+    }
     const body =
-      modal === "expense" || modal === "fund" ? { ...raw, amount: toDecimalNumber(raw.amount ?? "") } : raw;
+      modal === "expense" || modal === "fund"
+        ? { ...stringRaw, amount: toDecimalNumber(stringRaw.amount ?? "") }
+        : modal === "task"
+          ? {
+              ...stringRaw,
+              cost: stringRaw.cost ? toDecimalNumber(stringRaw.cost) : 0,
+              ...invoicePayload,
+            }
+          : stringRaw;
     setIsSaving(true);
     try {
       const response = await fetch(paths[modal], {
@@ -693,7 +730,7 @@ function OperationView({ tasks, role, onAdd }: { tasks: Task[]; role: Role; onAd
   const groups = ["Todas", "Limpieza edificio", "Áreas verdes", "Iluminación", "Reparación estructural"];
   const [filter, setFilter] = useState("Todas");
   const list = filter === "Todas" ? tasks : tasks.filter((task) => task.category === filter);
-  return <div className="space-y-5"><div className="flex flex-col gap-3 rounded-[22px] border border-[#e0eae5] bg-white p-3 sm:flex-row sm:items-center sm:justify-between"><div className="flex gap-1.5 overflow-x-auto pb-1 sm:pb-0">{groups.map((group) => <button key={group} onClick={() => setFilter(group)} className={`whitespace-nowrap rounded-xl px-3 py-2 text-xs font-bold transition ${filter === group ? "bg-[#204f46] text-white" : "text-[#678079] hover:bg-[#eef4f0]"}`}>{group}</button>)}</div>{isAdmin ? <button onClick={onAdd} className="flex shrink-0 items-center justify-center gap-2 rounded-xl bg-[#204f46] px-4 py-2.5 text-sm font-bold text-white transition hover:bg-[#163f38]"><Plus size={17} /> Crear tarea</button> : <p className="shrink-0 rounded-xl bg-[#f0f6f2] px-4 py-2.5 text-xs font-bold text-[#5e7b73]">Solo lectura · la creación es de administración</p>}</div><div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">{list.map((task) => { const Icon = taskIcons[task.category] || Wrench; return <article key={task.id} className="relative overflow-hidden rounded-[24px] border border-[#e1ebe6] bg-white p-5 shadow-[0_8px_30px_rgba(23,63,53,0.035)]"><div className="absolute right-0 top-0 h-1.5 w-24 bg-[#78a99b]" /><div className="flex items-start justify-between gap-3"><div className="grid size-11 place-items-center rounded-2xl bg-[#edf5f1] text-[#407b6d]"><Icon size={21} /></div><StatusPill value={task.status} compact /></div><p className="mt-5 text-xs font-bold uppercase tracking-[0.12em] text-[#78938a]">{task.category}</p><h3 className="mt-1.5 text-base font-bold text-[#244940]">{task.title}</h3><p className="mt-2 min-h-10 text-sm leading-5 text-[#718780]">{task.description || "Tarea de mantenimiento para las áreas comunes."}</p><div className="mt-5 flex items-center justify-between border-t border-[#edf1ee] pt-4 text-xs font-semibold text-[#6a817b]"><span className="flex items-center gap-1.5"><CalendarDays size={14} /> {task.scheduledFor || "Por definir"}</span><span>{task.location}</span></div></article>})}</div>{list.length === 0 && <EmptyState title="Sin tareas en esta categoría" detail="Crea una orden para planificar el siguiente mantenimiento." icon={ClipboardCheck} />}</div>;
+  return <div className="space-y-5"><div className="flex flex-col gap-3 rounded-[22px] border border-[#e0eae5] bg-white p-3 sm:flex-row sm:items-center sm:justify-between"><div className="flex gap-1.5 overflow-x-auto pb-1 sm:pb-0">{groups.map((group) => <button key={group} onClick={() => setFilter(group)} className={`whitespace-nowrap rounded-xl px-3 py-2 text-xs font-bold transition ${filter === group ? "bg-[#204f46] text-white" : "text-[#678079] hover:bg-[#eef4f0]"}`}>{group}</button>)}</div>{isAdmin ? <button onClick={onAdd} className="flex shrink-0 items-center justify-center gap-2 rounded-xl bg-[#204f46] px-4 py-2.5 text-sm font-bold text-white transition hover:bg-[#163f38]"><Plus size={17} /> Crear tarea</button> : <p className="shrink-0 rounded-xl bg-[#f0f6f2] px-4 py-2.5 text-xs font-bold text-[#5e7b73]">Solo lectura · la creación es de administración</p>}</div><div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">{list.map((task) => { const Icon = taskIcons[task.category] || Wrench; return <article key={task.id} className="relative overflow-hidden rounded-[24px] border border-[#e1ebe6] bg-white p-5 shadow-[0_8px_30px_rgba(23,63,53,0.035)]"><div className="absolute right-0 top-0 h-1.5 w-24 bg-[#78a99b]" /><div className="flex items-start justify-between gap-3"><div className="grid size-11 place-items-center rounded-2xl bg-[#edf5f1] text-[#407b6d]"><Icon size={21} /></div><StatusPill value={task.status} compact /></div><p className="mt-5 text-xs font-bold uppercase tracking-[0.12em] text-[#78938a]">{task.category}</p><h3 className="mt-1.5 text-base font-bold text-[#244940]">{task.title}</h3><p className="mt-2 min-h-10 text-sm leading-5 text-[#718780]">{task.description || "Tarea de mantenimiento para las áreas comunes."}</p><div className="mt-3 flex flex-wrap items-center gap-2 text-xs font-bold"><span className="rounded-full bg-[#eef4f1] px-2.5 py-1 text-[#2e6b5d]">Costo: B/. {(Number(task.actualCost ?? task.estimatedCost ?? 0)).toLocaleString("es-PA", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>{task.invoiceData ? <a href={task.invoiceData} download={task.invoiceName || "factura"} target="_blank" rel="noreferrer" className="rounded-full bg-[#204f46] px-2.5 py-1 text-white">Ver factura</a> : <span className="rounded-full bg-[#f1f5f3] px-2.5 py-1 text-[#8ba09a]">Sin factura</span>}</div><div className="mt-5 flex items-center justify-between border-t border-[#edf1ee] pt-4 text-xs font-semibold text-[#6a817b]"><span className="flex items-center gap-1.5"><CalendarDays size={14} /> {task.scheduledFor || "Por definir"}</span><span>{task.location}</span></div></article>})}</div>{list.length === 0 && <EmptyState title="Sin tareas en esta categoría" detail="Crea una orden para planificar el siguiente mantenimiento." icon={ClipboardCheck} />}</div>;
 }
 
 function FinanceView({ data, role, onAddExpense, onAddFund }: { data: DashboardData; role: Role; onAddExpense: () => void; onAddFund: () => void }) {
@@ -711,6 +748,7 @@ function UsersView({ initialUsers, currentEmail, onAddUser, onChanged, notify }:
   const [editUnit, setEditUnit] = useState("");
   const [editPhone, setEditPhone] = useState("");
   const [editRole, setEditRole] = useState("propietario");
+  const [editFee, setEditFee] = useState("40.80");
   const [newPassword, setNewPassword] = useState("");
   const [busyId, setBusyId] = useState<number | null>(null);
   const [isRefreshing, setIsRefreshing] = useState(false);
@@ -749,6 +787,7 @@ function UsersView({ initialUsers, currentEmail, onAddUser, onChanged, notify }:
     setEditUnit(item.unit);
     setEditPhone(item.phone ?? "");
     setEditRole(item.role === "administrador" ? "administrador" : "propietario");
+    setEditFee(String(Number(item.monthlyFee ?? 40.8).toFixed(2)));
     setNewPassword("");
   };
 
@@ -759,6 +798,11 @@ function UsersView({ initialUsers, currentEmail, onAddUser, onChanged, notify }:
     }
     if (newPassword && newPassword.length < 6) {
       notify("La nueva contraseña debe tener al menos 6 caracteres.");
+      return;
+    }
+    const feeNum = Number(editFee.trim().replace(/\s/g, "").replace(",", "."));
+    if (!Number.isFinite(feeNum) || feeNum < 0) {
+      notify("Cuota mensual inválida. Usa un número como 40.80.");
       return;
     }
     setBusyId(id);
@@ -772,6 +816,7 @@ function UsersView({ initialUsers, currentEmail, onAddUser, onChanged, notify }:
           unit: editUnit.trim(),
           phone: editPhone.trim(),
           role: editRole,
+          monthlyFee: Math.round(feeNum * 100) / 100,
           ...(newPassword ? { password: newPassword } : {}),
         }),
       });
@@ -863,7 +908,7 @@ function UsersView({ initialUsers, currentEmail, onAddUser, onChanged, notify }:
                     <label className="block"><span className="mb-1.5 block text-xs font-bold text-[#45655e]">Nombre</span><input value={editName} onChange={(event) => setEditName(event.target.value)} className="h-10 w-full rounded-xl border border-[#d9e5df] bg-white px-3 text-sm text-[#2d5149] outline-none focus:border-[#629588]" /></label>
                     <label className="block"><span className="mb-1.5 block text-xs font-bold text-[#45655e]">Unidad</span><input value={editUnit} onChange={(event) => setEditUnit(event.target.value)} className="h-10 w-full rounded-xl border border-[#d9e5df] bg-white px-3 text-sm text-[#2d5149] outline-none focus:border-[#629588]" /></label>
                     <label className="block"><span className="mb-1.5 block text-xs font-bold text-[#45655e]">Teléfono</span><input value={editPhone} onChange={(event) => setEditPhone(event.target.value)} className="h-10 w-full rounded-xl border border-[#d9e5df] bg-white px-3 text-sm text-[#2d5149] outline-none focus:border-[#629588]" /></label>
-                    <label className="block"><span className="mb-1.5 block text-xs font-bold text-[#45655e]">Rol</span><select value={editRole} onChange={(event) => setEditRole(event.target.value)} className="h-10 w-full rounded-xl border border-[#d9e5df] bg-white px-3 text-sm text-[#2d5149] outline-none focus:border-[#629588]"><option value="propietario">Propietario · consulta + reportes</option><option value="administrador">Administrador · acceso total</option></select></label>
+                    <label className="block"><span className="mb-1.5 block text-xs font-bold text-[#45655e]">Rol</span><select value={editRole} onChange={(event) => setEditRole(event.target.value)} className="h-10 w-full rounded-xl border border-[#d9e5df] bg-white px-3 text-sm text-[#2d5149] outline-none focus:border-[#629588]"><option value="propietario">Propietario · consulta + reportes</option><option value="administrador">Administrador · acceso total</option></select></label><label className="block"><span className="mb-1.5 block text-xs font-bold text-[#45655e]">Cuota mensual (B/.)</span><input value={editFee} onChange={(event) => setEditFee(event.target.value)} inputMode="decimal" placeholder="40.80" className="h-10 w-full rounded-xl border border-[#d9e5df] bg-white px-3 text-sm text-[#2d5149] outline-none focus:border-[#629588]" /></label>
                     <label className="block sm:col-span-2"><span className="mb-1.5 block text-xs font-bold text-[#45655e]">Nueva contraseña (opcional)</span><input value={newPassword} onChange={(event) => setNewPassword(event.target.value)} type="text" placeholder="Déjalo vacío para no cambiarla · mínimo 6 caracteres" className="h-10 w-full rounded-xl border border-[#d9e5df] bg-white px-3 text-sm text-[#2d5149] outline-none placeholder:text-[#a1b0ab] focus:border-[#629588]" /></label>
                   </div>
                 )}
@@ -896,8 +941,8 @@ function SelectField({ label, name, children, defaultValue }: { label: string; n
   return <label className="block"><span className="mb-1.5 block text-xs font-bold text-[#45655e]">{label}</span><select name={name} defaultValue={defaultValue} className="h-11 w-full rounded-xl border border-[#d9e5df] bg-[#fbfcfb] px-3.5 text-sm font-medium text-[#2d5149] outline-none focus:border-[#629588]">{children}</select></label>;
 }
 
-function TaskForm() { return <><Field label="Nombre de la tarea" name="title" placeholder="Ej. Cambio de luminarias" /><div className="grid grid-cols-2 gap-3"><SelectField label="Categoría" name="category"><option>Limpieza edificio</option><option>Áreas verdes</option><option>Iluminación</option><option>Reparación estructural</option></SelectField><SelectField label="Prioridad" name="priority"><option value="media">Media</option><option value="alta">Alta</option><option value="baja">Baja</option></SelectField></div><Field label="Ubicación" name="location" placeholder="Ej. Torre B · Piso 3" /><Field label="Fecha programada" name="scheduledFor" type="date" required={false} /><label className="block"><span className="mb-1.5 block text-xs font-bold text-[#45655e]">Notas (opcional)</span><textarea name="description" rows={3} placeholder="Indica lo que debe realizar el proveedor..." className="w-full resize-none rounded-xl border border-[#d9e5df] bg-[#fbfcfb] p-3.5 text-sm font-medium text-[#2d5149] outline-none placeholder:text-[#a1b0ab] focus:border-[#629588]" /></label></>; }
+function TaskForm() { return <><Field label="Nombre de la tarea" name="title" placeholder="Ej. Cambio de luminarias" /><div className="grid grid-cols-2 gap-3"><SelectField label="Categoría" name="category"><option>Limpieza edificio</option><option>Áreas verdes</option><option>Iluminación</option><option>Reparación estructural</option></SelectField><SelectField label="Prioridad" name="priority"><option value="media">Media</option><option value="alta">Alta</option><option value="baja">Baja</option></SelectField></div><Field label="Ubicación" name="location" placeholder="Ej. Torre B · Piso 3" /><div className="grid grid-cols-2 gap-3"><Field label="Costo de la tarea (B/.)" name="cost" type="text" placeholder="Ej. 150.00" inputMode="decimal" required={false} /><Field label="Fecha programada" name="scheduledFor" type="date" required={false} /></div><label className="block"><span className="mb-1.5 block text-xs font-bold text-[#45655e]">Factura del gasto (PDF o foto, máx 3MB)</span><input name="invoiceFile" type="file" accept=".pdf,.jpg,.jpeg,.png,.webp" className="w-full rounded-xl border border-[#d9e5df] bg-[#fbfcfb] p-2.5 text-sm font-medium text-[#2d5149] outline-none file:mr-3 file:rounded-lg file:border-0 file:bg-[#e8f1ed] file:px-3 file:py-2 file:text-xs file:font-bold file:text-[#2e6b5d]" /></label><label className="block"><span className="mb-1.5 block text-xs font-bold text-[#45655e]">Notas (opcional)</span><textarea name="description" rows={3} placeholder="Indica lo que debe realizar el proveedor..." className="w-full resize-none rounded-xl border border-[#d9e5df] bg-[#fbfcfb] p-3.5 text-sm font-medium text-[#2d5149] outline-none placeholder:text-[#a1b0ab] focus:border-[#629588]" /></label></>; }
 function ReportForm() { return <><Field label="Título del reporte" name="title" placeholder="Ej. Fuga en pasillo" /><div className="grid grid-cols-2 gap-3"><SelectField label="Tipo" name="category"><option>Daño</option><option>Convivencia</option><option>Seguridad</option><option>Sugerencia</option></SelectField><SelectField label="Prioridad" name="priority"><option value="media">Media</option><option value="alta">Alta</option><option value="baja">Baja</option></SelectField></div><Field label="Ubicación" name="location" placeholder="Ej. Torre C · Nivel 2" /><label className="block"><span className="mb-1.5 block text-xs font-bold text-[#45655e]">¿Qué ocurrió?</span><textarea name="description" required rows={4} placeholder="Describe el problema con el mayor detalle posible..." className="w-full resize-none rounded-xl border border-[#d9e5df] bg-[#fbfcfb] p-3.5 text-sm font-medium text-[#2d5149] outline-none placeholder:text-[#a1b0ab] focus:border-[#629588]" /></label></>; }
 function ExpenseForm() { return <><Field label="Descripción del gasto" name="description" placeholder="Ej. Compra de hilo de máquina" /><div className="grid grid-cols-2 gap-3"><SelectField label="Categoría" name="category"><option>Servicios</option><option>Limpieza</option><option>Áreas verdes</option><option>Repuestos</option><option>Varios</option></SelectField><Field label="Monto (B/.)" name="amount" type="text" placeholder="5.45" inputMode="decimal" /></div><p className="-mt-1 text-[11px] leading-4 text-[#8ba09a]">Acepta decimales con punto o coma, por ejemplo 5.45 o 5,45.</p><Field label="Proveedor" name="vendor" placeholder="Ej. Novey" /><Field label="Fecha de pago" name="expenseDate" type="date" defaultValue={new Date().toISOString().slice(0, 10)} /></>; }
 function FundForm() { return <><Field label="Monto del movimiento (B/.)" name="amount" type="text" placeholder="Ej. 25.50 o -10.25" inputMode="decimal" /><div className="rounded-xl bg-[#f0f6f2] p-3 text-xs leading-5 text-[#5e7b73]"><strong>Nota:</strong> usa un valor positivo para sumar al fondo y un valor negativo para descontar un ajuste. Acepta decimales con punto o coma, por ejemplo 25.50.</div></>; }
-function UserForm() { return <><Field label="Nombre completo" name="fullName" placeholder="Ej. María González" /><div className="grid grid-cols-2 gap-3"><Field label="Unidad" name="unit" placeholder="Ej. Torre A · 5C" /><SelectField label="Rol" name="role"><option value="propietario">Propietario</option><option value="administrador">Administrador</option></SelectField></div><Field label="Correo electrónico" name="email" type="email" placeholder="usuario@email.com" /><div className="grid grid-cols-2 gap-3"><Field label="Teléfono (opcional)" name="phone" required={false} placeholder="+507 6000-0000" /><Field label="Contraseña temporal" name="password" type="text" placeholder="Mínimo 6 caracteres" /></div><div className="rounded-xl bg-[#f0f6f2] p-3 text-xs leading-5 text-[#5e7b73]">Comparte ese correo y contraseña con la persona. Podrá cambiarla luego con la administración.</div></>; }
+function UserForm() { return <><Field label="Nombre completo" name="fullName" placeholder="Ej. María González" /><div className="grid grid-cols-2 gap-3"><Field label="Unidad" name="unit" placeholder="Ej. Torre A · 5C" /><SelectField label="Rol" name="role"><option value="propietario">Propietario</option><option value="administrador">Administrador</option></SelectField></div><Field label="Correo electrónico" name="email" type="email" placeholder="usuario@email.com" /><div className="grid grid-cols-2 gap-3"><Field label="Cuota mensual (B/.)" name="monthlyFee" type="text" placeholder="40.80" inputMode="decimal" defaultValue="40.80" /><Field label="Teléfono (opcional)" name="phone" required={false} placeholder="+507 6000-0000" /></div><Field label="Contraseña temporal" name="password" type="text" placeholder="Mínimo 6 caracteres" /><div className="rounded-xl bg-[#f0f6f2] p-3 text-xs leading-5 text-[#5e7b73]">La cuota mensual se genera sola cada mes para este propietario. Puedes dejar 40.80 o poner una cuota diferente.</div></>; }

@@ -21,6 +21,13 @@ export const residents = pgTable("residents", {
   outstandingBalance: numeric("outstanding_balance", { precision: 12, scale: 2 })
     .notNull()
     .default("0"),
+  monthlyFee: numeric("monthly_fee", { precision: 10, scale: 2 }).notNull().default("40.80"),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
+export const monthlyClosings = pgTable("monthly_closings", {
+  id: serial("id").primaryKey(),
+  period: varchar("period", { length: 7 }).notNull().unique(),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 });
 
@@ -35,6 +42,10 @@ export const maintenanceTasks = pgTable("maintenance_tasks", {
   scheduledFor: date("scheduled_for"),
   assignedTo: varchar("assigned_to", { length: 140 }),
   estimatedCost: numeric("estimated_cost", { precision: 12, scale: 2 }).default("0"),
+  actualCost: numeric("actual_cost", { precision: 12, scale: 2 }).default("0"),
+  invoiceName: varchar("invoice_name", { length: 180 }),
+  invoiceMime: varchar("invoice_mime", { length: 80 }),
+  invoiceData: text("invoice_data"),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 });
 

@@ -48,6 +48,7 @@ type ManagedUser = {
   email: string;
   unit: string;
   role: string;
+  monthlyFee?: number;
 };
 
 type Role = "Administrador" | "Propietario";
@@ -144,16 +145,28 @@ export function AccountsPanel({
   const [creating, setCreating] = useState(false);
 
   useEffect(() => {
-    setCreateDue(String(fee));
-  }, [fee]);
+    if (createResident) return;
+    const selected = residents.find((r) => String(r.id) === createResident);
+    if (selected?.monthlyFee) setCreateDue(String(Number(selected.monthlyFee).toFixed(2)));
+    else setCreateDue(String(fee));
+  }, [fee, createResident, residents]);
 
   useEffect(() => {
     if (!residents.length) return;
     if (!createResident) {
       const firstOwner = residents.find((r) => r.role !== "administrador") ?? residents[0];
-      if (firstOwner) setCreateResident(String(firstOwner.id));
+      if (firstOwner) {
+        setCreateResident(String(firstOwner.id));
+        if (firstOwner.monthlyFee) setCreateDue(String(Number(firstOwner.monthlyFee).toFixed(2)));
+      }
     }
   }, [residents, createResident]);
+
+  const handleSelectResident = (id: string) => {
+    setCreateResident(id);
+    const selected = residents.find((r) => String(r.id) === id);
+    if (selected?.monthlyFee) setCreateDue(String(Number(selected.monthlyFee).toFixed(2)));
+  };
 
   const ownAccounts = useMemo(() => {
     const lowered = currentEmail.toLowerCase();
@@ -284,7 +297,7 @@ export function AccountsPanel({
           <div>
             <h2 className="text-lg font-bold text-[#284e45]">{isAdmin ? "Cuentas de propietarios" : "Mi estado de cuenta"}</h2>
             <p className="mt-1 text-sm text-[#7a8e88]">
-              {isAdmin ? "Edita lo pagado, cambia el estado a Moroso o Al día, agrega detalles e imprime recibos." : "Consulta tus pagos y descarga tu recibo."}
+              {isAdmin ? "Cada 1ro se genera la cuota sola (40.80 o la personalizada). La cuota no se toca salvo corrección; lo pagado resta del saldo." : "Consulta tus pagos y descarga tu recibo."}
             </p>
           </div>
           <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
@@ -304,7 +317,7 @@ export function AccountsPanel({
           <div className="grid gap-3 border-b border-[#ebf0ed] bg-[#f7faf8] p-5 sm:p-6 md:grid-cols-3">
             <label className="block">
               <span className="mb-1.5 block text-xs font-bold text-[#45655e]">Propietario</span>
-              <select value={createResident} onChange={(e) => setCreateResident(e.target.value)} className="h-10 w-full rounded-xl border border-[#d9e5df] bg-white px-3 text-sm text-[#2d5149] outline-none focus:border-[#629588]">
+              <select value={createResident} onChange={(e) => handleSelectResident(e.target.value)} className="h-10 w-full rounded-xl border border-[#d9e5df] bg-white px-3 text-sm text-[#2d5149] outline-none focus:border-[#629588]">
                 {residents.map((r) => (
                   <option key={r.id} value={r.id}>{r.fullName} · {r.unit}</option>
                 ))}
