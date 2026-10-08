@@ -349,18 +349,26 @@ export async function createExpense(input: {
   amount: number;
   expenseDate?: string;
 }) {
+  const rounded = Math.round(input.amount * 100) / 100;
   const [expense] = await db
     .insert(expenses)
     .values({
       category: input.category,
       description: input.description,
       vendor: input.vendor,
-      amount: String(input.amount),
+      amount: String(rounded),
       expenseDate: input.expenseDate || new Date().toISOString().slice(0, 10),
       status: "pagado",
     })
     .returning();
-  return { ...expense, amount: asNumber(expense.amount) };
+  const result = { ...expense, amount: asNumber(expense.amount) };
+  // Todo gasto (reparación, repuesto, servicio, etc.) resta automáticamente del fondo.
+  try {
+    await adjustFundBy(-rounded);
+  } catch (error) {
+    console.error("Expense created but fund was not updated", error);
+  }
+  return result;
 }
 
 export async function updateFundBalance(amount: number) {
@@ -379,6 +387,24 @@ export async function updateFundBalance(amount: number) {
     .where(eq(phFunds.id, currentFund.id))
     .returning();
   return { ...fund, currentBalance: asNumber(fund.currentBalance) };
+}
+
+/**
+ * Suma (positivo) o resta (negativo) un movimiento al fondo común.
+ * Se usa automáticamente: los pagos de cuota suman, los gastos restan.
+ */
+export async function adjustFundBy(delta: number) {
+  const rounded = Math.round(delta * 100) / 100;
+  if (!Number.isFinite(rounded) || rounded === 0) return null;
+  const fund = await ensureFundExists();
+  if (!fund) return null;
+  const nextBalance = Math.round((asNumber(fund.currentBalance) + rounded) * 100) / 100;
+  const [updated] = await db
+    .update(phFunds)
+    .set({ currentBalance: String(nextBalance), updatedAt: new Date() })
+    .where(eq(phFunds.id, fund.id))
+    .returning();
+  return updated ? { ...updated, currentBalance: asNumber(updated.currentBalance) } : null;
 }
 
 export async function getExpenseCategories() {
@@ -491,18 +517,28 @@ export async function createAccountEntry(input: {
   const residentRows = await db.select().from(residents).where(eq(residents.id, input.residentId)).limit(1);
   if (!residentRows[0]) throw new Error("Propietario no encontrado.");
   const dueDate = input.dueDate || new Date().toISOString().slice(0, 10);
+  const roundedDue = Math.round(input.dueAmount * 100) / 100;
+  const roundedPaid = Math.round(paid * 100) / 100;
   const [row] = await db
     .insert(ownerAccounts)
     .values({
       residentId: input.residentId,
       period: currentPeriodLabel(new Date(`${dueDate}T12:00:00`)),
       dueDate,
-      dueAmount: String(Math.round(input.dueAmount * 100) / 100),
-      paidAmount: String(Math.round(paid * 100) / 100),
+      dueAmount: String(roundedDue),
+      paidAmount: String(roundedPaid),
       status: normalizeAccountStatus(input.status),
       notes: input.notes?.trim() ? input.notes.trim().slice(0, 500) : null,
     })
     .returning();
+  // Todo pago de cuota suma automáticamente al fondo común.
+  if (roundedPaid > 0) {
+    try {
+      await adjustFundBy(roundedPaid);
+    } catch (error) {
+      console.error("Account created but fund was not updated", error);
+    }
+  }
   return row;
 }
 
@@ -511,6 +547,9 @@ export async function updateAccountEntry(
   input: { dueAmount?: number; paidAmount?: number; status?: string; notes?: string | null; dueDate?: string },
 ) {
   if (!Number.isFinite(id) || id <= 0) throw new Error("Cuenta inválida.");
+  const previous = await db.select().from(ownerAccounts).where(eq(ownerAccounts.id, id)).limit(1);
+  if (!previous[0]) throw new Error("Cuenta no encontrada.");
+  const oldPaid = asNumber(previous[0].paidAmount);
   const patch: Partial<typeof ownerAccounts.$inferInsert> = {};
   if (input.dueAmount !== undefined) {
     if (!Number.isFinite(input.dueAmount) || input.dueAmount < 0) throw new Error("Cuota inválida.");
@@ -528,11 +567,32 @@ export async function updateAccountEntry(
   if (Object.keys(patch).length === 0) throw new Error("No hay cambios para guardar.");
   const [row] = await db.update(ownerAccounts).set(patch).where(eq(ownerAccounts.id, id)).returning();
   if (!row) throw new Error("Cuenta no encontrada.");
-  return { ...row, dueAmount: asNumber(row.dueAmount), paidAmount: asNumber(row.paidAmount) };
+  const result = { ...row, dueAmount: asNumber(row.dueAmount), paidAmount: asNumber(row.paidAmount) };
+  // Solo la diferencia de lo pagado mueve el fondo (ej. de 0 a 40.80 suma 40.80).
+  const delta = Math.round((result.paidAmount - oldPaid) * 100) / 100;
+  if (delta !== 0) {
+    try {
+      await adjustFundBy(delta);
+    } catch (error) {
+      console.error("Account updated but fund was not updated", error);
+    }
+  }
+  return result;
 }
 
 export async function deleteAccountEntry(id: number) {
   if (!Number.isFinite(id) || id <= 0) throw new Error("Cuenta inválida.");
+  const previous = await db.select().from(ownerAccounts).where(eq(ownerAccounts.id, id)).limit(1);
+  if (!previous[0]) throw new Error("Cuenta no encontrada.");
+  const paid = asNumber(previous[0].paidAmount);
   await db.delete(ownerAccounts).where(eq(ownerAccounts.id, id));
+  // Si se elimina un movimiento que tenía un pago, se revierte ese ingreso del fondo.
+  if (paid > 0) {
+    try {
+      await adjustFundBy(-paid);
+    } catch (error) {
+      console.error("Account deleted but fund was not updated", error);
+    }
+  }
   return { ok: true };
 }
