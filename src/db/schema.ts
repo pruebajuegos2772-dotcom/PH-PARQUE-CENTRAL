@@ -48,6 +48,18 @@ export const reports = pgTable("reports", {
   status: varchar("status", { length: 30 }).notNull().default("recibido"),
   reporterName: varchar("reporter_name", { length: 140 }).notNull(),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
+export const reportComments = pgTable("report_comments", {
+  id: serial("id").primaryKey(),
+  reportId: integer("report_id")
+    .notNull()
+    .references(() => reports.id, { onDelete: "cascade" }),
+  authorName: varchar("author_name", { length: 140 }).notNull(),
+  authorRole: varchar("author_role", { length: 24 }).notNull().default("propietario"),
+  message: text("message").notNull(),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 });
 
 export const expenses = pgTable("expenses", {

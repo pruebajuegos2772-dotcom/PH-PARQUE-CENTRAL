@@ -1,14 +1,35 @@
-import { desc, eq, sql } from "drizzle-orm";
+import { asc, desc, eq, sql } from "drizzle-orm";
 import { db } from "@/db";
 import {
   expenses,
   maintenanceTasks,
   ownerAccounts,
   phFunds,
+  reportComments,
   residents,
   reports,
 } from "@/db/schema";
 import { hashPassword } from "@/lib/auth";
+
+export const REPORT_STATUSES = ["recibido", "visto", "en_proceso", "atendido"] as const;
+export type ReportStatus = (typeof REPORT_STATUSES)[number];
+
+export function normalizeReportStatus(value: unknown): string {
+  const v = String(value ?? "").trim().toLowerCase().replace(/\s+/g, "_");
+  if ((REPORT_STATUSES as readonly string[]).includes(v)) return v;
+  if (v === "en_revision" || v === "revisado" || v === "visto_bueno") return "visto";
+  if (v === "asignado" || v === "en_progreso" || v === "proceso") return "en_proceso";
+  if (v === "cerrado" || v === "resuelto" || v === "atendido_correctamente") return "atendido";
+  return "recibido";
+}
+
+export function reportStatusLabel(value: string) {
+  const v = normalizeReportStatus(value);
+  if (v === "recibido") return "Recibido";
+  if (v === "visto") return "Visto";
+  if (v === "en_proceso") return "En proceso";
+  return "Atendido";
+}
 
 const asNumber = (value: string | number | null) => Number(value ?? 0);
 
@@ -144,10 +165,11 @@ export async function ensureDemoData() {
 export async function getDashboardData() {
   await ensureDemoData();
 
-  const [fund, taskRows, reportRows, expenseRows, accountRows, residentRows] = await Promise.all([
+  const [fund, taskRows, reportRows, commentRows, expenseRows, accountRows, residentRows] = await Promise.all([
     db.select().from(phFunds).limit(1),
     db.select().from(maintenanceTasks).orderBy(desc(maintenanceTasks.createdAt)),
     db.select().from(reports).orderBy(desc(reports.createdAt)),
+    db.select().from(reportComments).orderBy(asc(reportComments.createdAt)),
     db.select().from(expenses).orderBy(desc(expenses.expenseDate)),
     db
       .select({
@@ -183,7 +205,19 @@ export async function getDashboardData() {
       ? { ...fund[0], currentBalance: asNumber(fund[0].currentBalance), monthlyFee: asNumber(fund[0].monthlyFee), monthlyBudget: asNumber(fund[0].monthlyBudget) }
       : null,
     tasks: taskRows.map((task) => ({ ...task, estimatedCost: asNumber(task.estimatedCost) })),
-    reports: reportRows,
+    reports: reportRows.map((report) => {
+      const status = normalizeReportStatus(report.status);
+      const comments = commentRows
+        .filter((c) => c.reportId === report.id)
+        .map((c) => ({ ...c, createdAt: c.createdAt ? c.createdAt.toISOString() : new Date().toISOString() }));
+      return {
+        ...report,
+        status,
+        updatedAt: report.updatedAt ? report.updatedAt.toISOString() : report.createdAt.toISOString(),
+        createdAt: report.createdAt.toISOString(),
+        comments,
+      };
+    }),
     expenses: expenseRows.map((expense) => ({ ...expense, amount: asNumber(expense.amount) })),
     accounts: accountRows.map((account) => ({
       ...account,
@@ -208,7 +242,7 @@ export async function getDashboardData() {
       totalPaid,
       outstanding,
       activeTasks: taskRows.filter((task) => task.status !== "completada").length,
-      openReports: reportRows.filter((report) => !["cerrado", "resuelto"].includes(report.status)).length,
+      openReports: reportRows.filter((report) => normalizeReportStatus(report.status) !== "atendido").length,
       collectionRate: totalBilled ? Math.round((totalPaid / totalBilled) * 100) : 0,
     },
   };
@@ -258,6 +292,54 @@ export async function createReport(input: {
     })
     .returning();
   return report;
+}
+
+export async function updateReportStatus(id: number, status: unknown) {
+  if (!Number.isFinite(id) || id <= 0) throw new Error("Reporte inválido.");
+  const next = normalizeReportStatus(status);
+  const [row] = await db
+    .update(reports)
+    .set({ status: next, updatedAt: new Date() })
+    .where(eq(reports.id, id))
+    .returning();
+  if (!row) throw new Error("Reporte no encontrado.");
+  return { ...row, status: normalizeReportStatus(row.status) };
+}
+
+export async function listReportComments(reportId: number) {
+  if (!Number.isFinite(reportId) || reportId <= 0) throw new Error("Reporte inválido.");
+  const rows = await db
+    .select()
+    .from(reportComments)
+    .where(eq(reportComments.reportId, reportId))
+    .orderBy(asc(reportComments.createdAt));
+  return rows.map((c) => ({ ...c, createdAt: c.createdAt ? c.createdAt.toISOString() : new Date().toISOString() }));
+}
+
+export async function createReportComment(input: {
+  reportId: number;
+  message: string;
+  authorName: string;
+  authorRole?: string;
+}) {
+  if (!Number.isFinite(input.reportId) || input.reportId <= 0) throw new Error("Reporte inválido.");
+  const message = String(input.message ?? "").trim();
+  if (message.length < 2) throw new Error("Escribe un comentario de al menos 2 caracteres.");
+  if (message.length > 1000) throw new Error("El comentario es muy largo (máximo 1000 caracteres).");
+  const existing = await db.select({ id: reports.id }).from(reports).where(eq(reports.id, input.reportId)).limit(1);
+  if (!existing[0]) throw new Error("Reporte no encontrado.");
+  const role = input.authorRole === "administrador" ? "administrador" : "propietario";
+  const [row] = await db
+    .insert(reportComments)
+    .values({
+      reportId: input.reportId,
+      authorName: input.authorName.trim().slice(0, 140) || "Usuario",
+      authorRole: role,
+      message: message.slice(0, 1000),
+    })
+    .returning();
+  await db.update(reports).set({ updatedAt: new Date() }).where(eq(reports.id, input.reportId));
+  return { ...row, createdAt: row.createdAt ? row.createdAt.toISOString() : new Date().toISOString() };
 }
 
 export async function createExpense(input: {

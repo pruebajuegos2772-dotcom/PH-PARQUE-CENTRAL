@@ -35,6 +35,7 @@ import {
 import { FormEvent, useEffect, useMemo, useState } from "react";
 import { PhLogo } from "@/components/ph-logo";
 import { AccountsPanel } from "@/components/accounts-panel";
+import { ReportsPanel } from "@/components/reports-panel";
 
 type View = "resumen" | "operacion" | "reportes" | "finanzas" | "cuentas" | "usuarios";
 type ModalKind = "task" | "report" | "expense" | "fund" | "user" | null;
@@ -72,6 +73,15 @@ type Task = {
   estimatedCost: number;
 };
 
+type ReportComment = {
+  id: number;
+  reportId: number;
+  authorName: string;
+  authorRole: string;
+  message: string;
+  createdAt: string;
+};
+
 type Report = {
   id: number;
   title: string;
@@ -82,6 +92,8 @@ type Report = {
   status: string;
   reporterName: string;
   createdAt: string;
+  updatedAt?: string;
+  comments: ReportComment[];
 };
 
 type Expense = {
@@ -517,7 +529,7 @@ export default function HomePage() {
             <>
               {activeView === "resumen" && data && <SummaryView data={data} role={role} onAdd={(kind) => openModal(kind)} onNavigate={chooseView} />}
               {activeView === "operacion" && data && <OperationView tasks={data.tasks} role={role} onAdd={() => openModal("task")} />}
-              {activeView === "reportes" && data && <ReportsView reports={data.reports} onAdd={() => openModal("report")} />}
+              {activeView === "reportes" && data && <ReportsPanel reports={data.reports} role={role} onAdd={() => openModal("report")} onChanged={loadData} notify={setMessage} />}
               {activeView === "finanzas" && data && <FinanceView data={data} role={role} onAddExpense={() => openModal("expense")} onAddFund={() => openModal("fund")} />}
               {activeView === "cuentas" && data && <AccountsPanel accounts={filteredAccounts} allAccounts={data.accounts} residents={data.residents} query={query} onQuery={setQuery} fee={monthlyFee} role={role} currentEmail={user.email} onChanged={loadData} notify={setMessage} />}
               {activeView === "usuarios" && data && role === "Administrador" && (
@@ -682,10 +694,6 @@ function OperationView({ tasks, role, onAdd }: { tasks: Task[]; role: Role; onAd
   const [filter, setFilter] = useState("Todas");
   const list = filter === "Todas" ? tasks : tasks.filter((task) => task.category === filter);
   return <div className="space-y-5"><div className="flex flex-col gap-3 rounded-[22px] border border-[#e0eae5] bg-white p-3 sm:flex-row sm:items-center sm:justify-between"><div className="flex gap-1.5 overflow-x-auto pb-1 sm:pb-0">{groups.map((group) => <button key={group} onClick={() => setFilter(group)} className={`whitespace-nowrap rounded-xl px-3 py-2 text-xs font-bold transition ${filter === group ? "bg-[#204f46] text-white" : "text-[#678079] hover:bg-[#eef4f0]"}`}>{group}</button>)}</div>{isAdmin ? <button onClick={onAdd} className="flex shrink-0 items-center justify-center gap-2 rounded-xl bg-[#204f46] px-4 py-2.5 text-sm font-bold text-white transition hover:bg-[#163f38]"><Plus size={17} /> Crear tarea</button> : <p className="shrink-0 rounded-xl bg-[#f0f6f2] px-4 py-2.5 text-xs font-bold text-[#5e7b73]">Solo lectura · la creación es de administración</p>}</div><div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">{list.map((task) => { const Icon = taskIcons[task.category] || Wrench; return <article key={task.id} className="relative overflow-hidden rounded-[24px] border border-[#e1ebe6] bg-white p-5 shadow-[0_8px_30px_rgba(23,63,53,0.035)]"><div className="absolute right-0 top-0 h-1.5 w-24 bg-[#78a99b]" /><div className="flex items-start justify-between gap-3"><div className="grid size-11 place-items-center rounded-2xl bg-[#edf5f1] text-[#407b6d]"><Icon size={21} /></div><StatusPill value={task.status} compact /></div><p className="mt-5 text-xs font-bold uppercase tracking-[0.12em] text-[#78938a]">{task.category}</p><h3 className="mt-1.5 text-base font-bold text-[#244940]">{task.title}</h3><p className="mt-2 min-h-10 text-sm leading-5 text-[#718780]">{task.description || "Tarea de mantenimiento para las áreas comunes."}</p><div className="mt-5 flex items-center justify-between border-t border-[#edf1ee] pt-4 text-xs font-semibold text-[#6a817b]"><span className="flex items-center gap-1.5"><CalendarDays size={14} /> {task.scheduledFor || "Por definir"}</span><span>{task.location}</span></div></article>})}</div>{list.length === 0 && <EmptyState title="Sin tareas en esta categoría" detail="Crea una orden para planificar el siguiente mantenimiento." icon={ClipboardCheck} />}</div>;
-}
-
-function ReportsView({ reports, onAdd }: { reports: Report[]; onAdd: () => void }) {
-  return <div className="grid gap-5 xl:grid-cols-5"><section className="rounded-[26px] border border-[#e1ebe6] bg-white p-5 shadow-[0_8px_30px_rgba(23,63,53,0.035)] sm:p-6 xl:col-span-3"><div className="flex items-center justify-between gap-3"><div><h2 className="text-lg font-bold text-[#244940]">Bandeja de incidencias</h2><p className="mt-1 text-sm text-[#7d918b]">Cada reporte recibe seguimiento visible.</p></div><button onClick={onAdd} className="flex shrink-0 items-center gap-2 rounded-xl bg-[#d86445] px-3.5 py-2.5 text-sm font-bold text-white"><Plus size={16} /> Reportar</button></div><div className="mt-5 divide-y divide-[#edf1ee]">{reports.map((report) => <article key={report.id} className="flex gap-3 py-4 first:pt-0"><div className={`mt-0.5 grid size-10 shrink-0 place-items-center rounded-xl ${report.priority === "alta" ? "bg-[#fff0ec] text-[#d86648]" : "bg-[#edf4f1] text-[#538076]"}`}><CircleAlert size={19} /></div><div className="min-w-0 flex-1"><div className="flex flex-wrap items-center justify-between gap-2"><p className="font-bold text-[#2b5048]">{report.title}</p><StatusPill value={report.status} compact /></div><p className="mt-1 text-sm leading-5 text-[#71867f]">{report.description}</p><div className="mt-3 flex flex-wrap items-center gap-x-4 gap-y-1 text-xs font-semibold text-[#84958f]"><span>{report.location}</span><span>Por {report.reporterName}</span><span className="text-[#557a70]">{report.category}</span></div></div></article>)}</div></section><aside className="rounded-[26px] bg-[#eff6f2] p-5 sm:p-6 xl:col-span-2"><div className="grid size-11 place-items-center rounded-2xl bg-white text-[#4e8577]"><ShieldCheck size={22} /></div><h3 className="mt-5 text-xl font-bold tracking-[-0.04em] text-[#285047]">Una comunidad que escucha</h3><p className="mt-2 text-sm leading-6 text-[#668078]">Los reportes quedan registrados y reciben actualizaciones hasta su resolución.</p><div className="mt-6 space-y-3"><div className="rounded-2xl bg-white p-4"><p className="text-[25px] font-bold tracking-[-0.04em] text-[#29584e]">{reports.filter((r) => r.status === "recibido").length}</p><p className="text-xs font-bold text-[#79918a]">Nuevos por revisar</p></div><div className="rounded-2xl bg-white p-4"><p className="text-[25px] font-bold tracking-[-0.04em] text-[#29584e]">24 h</p><p className="text-xs font-bold text-[#79918a]">Tiempo objetivo de respuesta</p></div></div></aside></div>;
 }
 
 function FinanceView({ data, role, onAddExpense, onAddFund }: { data: DashboardData; role: Role; onAddExpense: () => void; onAddFund: () => void }) {
